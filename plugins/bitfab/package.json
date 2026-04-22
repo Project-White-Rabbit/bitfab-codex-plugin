@@ -1,6 +1,6 @@
 {
   "name": "bitfab-codex-plugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Bitfab LLM evaluation tools for OpenAI Codex CLI — trace inspection, grader management, and diagnostics via MCP",
   "type": "module",
   "scripts": {

@@ -10,4 +10,5 @@ export const platform = {
     marketplaceName: "bitfab",
     pluginName: "bitfab",
     marketplacePreRegistered: false,
+    pluginUpdateCommands: ["codex plugin marketplace upgrade bitfab"],
 };
