@@ -1,0 +1,35 @@
+#!/usr/bin/env sh
+# CLI dispatcher: login, logout, status, update, start-dataset
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+
+if [ -n "${NODE_OPTIONS:-}" ]; then
+  unset NODE_OPTIONS
+fi
+
+NODE_CMD="node"
+if [ -n "${NODE_BIN:-}" ] && [ -x "${NODE_BIN}" ]; then
+  NODE_CMD="${NODE_BIN}"
+elif ! command -v node >/dev/null 2>&1; then
+  echo "Error: Node.js not found." >&2
+  exit 127
+fi
+
+cmd="${1:-}"
+case "$cmd" in
+  login)        exec "$NODE_CMD" "$ROOT/dist/commands/login.js" ;;
+  logout)       exec "$NODE_CMD" "$ROOT/dist/commands/logout.js" ;;
+  status)       exec "$NODE_CMD" "$ROOT/dist/commands/status.js" ;;
+  update)       exec "$NODE_CMD" "$ROOT/dist/commands/update.js" ;;
+  start-dataset) exec "$NODE_CMD" "$ROOT/dist/commands/startDataset.js" ;;
+  "")
+    echo "Usage: bitfab-codex {login|logout|status|update|start-dataset}" >&2
+    exit 2
+    ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    echo "Usage: bitfab-codex {login|logout|status|update|start-dataset}" >&2
+    exit 2
+    ;;
+esac

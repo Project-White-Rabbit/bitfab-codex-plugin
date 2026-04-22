@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "Bitfab": {
+      "command": "node",
+      "args": ["dist/mcp/server.js"],
+      "cwd": "."
+    }
+  }
+}

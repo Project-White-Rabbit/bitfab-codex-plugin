@@ -1,0 +1,20 @@
+{
+  "name": "bitfab",
+  "interface": {
+    "displayName": "Bitfab"
+  },
+  "plugins": [
+    {
+      "name": "bitfab",
+      "source": {
+        "source": "local",
+        "path": "./plugins/bitfab"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "developer-tools"
+    }
+  ]
+}
