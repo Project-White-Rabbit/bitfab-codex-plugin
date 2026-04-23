@@ -7,7 +7,7 @@ description: "Iterate on a traced Bitfab function to improve its pass rate. Use 
 
 Use the **local plugin MCP tools** (`mcp__Bitfab__*`) to find what's failing in a traced function, gather labeled failed traces, then iterate on the code/prompts using replay until pass rates improve.
 
-**MCP tools:** This skill uses `list_trace_functions`, `search_traces`, `read_traces`, and `update_agent_labels` from the **local plugin MCP server** (bundled with this plugin). Do NOT use the remote Bitfab MCP tools (`mcp__Simforge__*` or `mcp__Bitfab__*`) — use only the `mcp__Bitfab__*` variants.
+**MCP tools:** This skill uses `list_trace_functions`, `search_traces`, `read_traces`, and `update_agent_labels` from the **local plugin MCP server** (bundled with this plugin), exposed under the `mcp__Bitfab__*` prefix.
 
 **When the flow branches, always present the options clearly and wait for the user's answer before proceeding.** Number or letter the options so the user can pick by reference. Rules:
 

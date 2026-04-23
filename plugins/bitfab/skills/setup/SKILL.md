@@ -43,7 +43,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 - **Framework integrations (fetch when a framework is detected in step 1 of Instrument):** `/frameworks/langgraph`, `/frameworks/openai-agents`, `/frameworks/claude-agent-sdk`, `/frameworks/baml`. Each page documents the SDK's native handler/processor/wrapper for that framework, which is usually preferable to hand-wrapping every node/agent call with `withSpan`/`@span`.
 - **Tutorials / walkthroughs / replay script template:** the language-specific guide pages (`/typescript-sdk`, `/python-sdk`, `/ruby-sdk`, `/go-sdk`). Use these for the copy-pasteable replay script and the replay output contract. During Instrument, fetch the `#replay` section before step 11 so the replay script can be written alongside instrumentation in a single cycle.
 
-**MCP tools:** This skill uses `get_bitfab_api_key` from the **local plugin MCP server** (bundled with this plugin). Do NOT use the remote Bitfab MCP tools (`mcp__Simforge__*` or `mcp__Bitfab__*`) — use only the `mcp__Bitfab__*` variants.
+**MCP tools:** This skill uses `get_bitfab_api_key` from the **local plugin MCP server** (bundled with this plugin), exposed under the `mcp__Bitfab__*` prefix.
 
 | Invocation | Action |
 |---|---|
