@@ -4,6 +4,7 @@ export const platform = {
     setupHint: "$bitfab:setup",
     updateHint: "codex plugin marketplace upgrade bitfab",
     repo: "Project-White-Rabbit/bitfab-codex-plugin",
+    remotePackageJsonPath: "plugins/bitfab/package.json",
     cliBinary: "codex",
     displayName: "Codex",
     supportsAutoUpdate: true,
