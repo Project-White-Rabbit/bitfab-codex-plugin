@@ -1,6 +1,6 @@
 {
   "name": "bitfab",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Bitfab LLM evaluation tools for OpenAI Codex — trace inspection, grader management, and diagnostics via MCP.",
   "skills": "./skills",
   "hooks": "./hooks/hooks.json",
