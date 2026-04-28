@@ -48,11 +48,13 @@ The script does up to two things depending on mode:
 
 ## 2. Report the plugin result
 
-**Skip this step if mode is `sdk`.** If the plugin was updated, remind the user to restart Codex to apply the update. If the mode was `plugin`, stop here — do not run steps 3-9.
+**Run only when mode is `all` or `plugin`.**
+
+If the plugin was updated, remind the user to restart Codex to apply the update. If the mode was `plugin`, stop here — do not run steps 3-9.
 
 ## 3. Parse the SDK status
 
-**Skip this step and everything below if mode is `plugin`.**
+**Run only when mode is `all` or `sdk`.**
 
 Each line inside `<bitfab-sdk-status>` is a JSON object with fields:
 
@@ -77,6 +79,8 @@ If there are **no lines** inside `<bitfab-sdk-status>`, the programmatic check f
 
 ## 4. Verify with an agent pass (always)
 
+**Run only when mode is `all` or `sdk`.**
+
 The programmatic detection is regex-based and only knows the workspace formats we hand-coded (pnpm/npm/yarn workspaces, uv workspaces, go.work). It can miss unusual monorepo layouts, vendored SDKs, or projects using package managers we don't parse. **Always run this verification** before offering updates.
 
 - Grep the project for SDK imports (run these in parallel):
@@ -91,6 +95,8 @@ The programmatic detection is regex-based and only knows the workspace formats w
 
 ## 5. Agent fallback for `remoteCheckFailed` or detection gaps
 
+**Run only when mode is `all` or `sdk`.**
+
 For each entry where `remoteCheckFailed: true`, or any workspace discovered only in step 4, run the package manager's native outdated command from the workspace directory. The command is authoritative — it respects private registries, mirrors, and offline caches.
 
 | Language | Detection (from workspace/repo) | Command (run from workspace dir) |
@@ -104,6 +110,8 @@ Use the real latest from the command's output in place of `latest` when deciding
 
 ## 6. Ask whether to batch-update or step through workspaces
 
+**Run only when mode is `all` or `sdk`.**
+
 If there are **3 or more** workspaces with `updateAvailable: true`, ask — **one decision per question**:
 
 > A) **Update all N outdated workspaces** *(recommended)*
@@ -116,6 +124,8 @@ If there are **fewer than 3** outdated workspaces, skip this prompt and go strai
 
 ## 7. Ask per workspace whether to update
 
+**Run only when mode is `all` or `sdk`.**
+
 For the next workspace with `updateAvailable: true`, ask — **one decision per question**:
 
 > We recommend **Update**: `<workspacePath>` — `<language>` SDK `<current>` → `<latest>`.
@@ -126,6 +136,8 @@ For the next workspace with `updateAvailable: true`, ask — **one decision per 
 When no outdated workspaces remain, exit and acknowledge.
 
 ## 8. Run the update for the chosen workspace
+
+**Run only when mode is `all` or `sdk`.**
 
 Detect the package manager from the lockfiles and run the update **from the workspace directory** (not repo root — matters in monorepos):
 
@@ -139,6 +151,8 @@ Detect the package manager from the lockfiles and run the update **from the work
 After the update, Read the manifest to verify the new version and confirm to the user, then return to the per-workspace prompt for the next workspace.
 
 ## 9. Run updates for every outdated workspace
+
+**Run only when mode is `all` or `sdk`.**
 
 For every workspace with `updateAvailable: true`, detect the package manager from the lockfiles and run the update **from each workspace directory** (not repo root):
 
