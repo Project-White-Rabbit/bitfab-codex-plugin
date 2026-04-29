@@ -1,6 +1,6 @@
 ---
 name: improve
-description: "Iterate on a traced Bitfab function to improve its pass rate. Use when the user wants to review failing traces, label examples, and replay an LLM function until it passes. Invoke with $bitfab:improve <trace-function-key>."
+description: "Iterate on a traced Bitfab function to improve its pass rate. Use when the user wants to review failing traces, label examples, and replay an LLM function until it passes. Invoke with $bitfab:improve [all|dataset|experiment] [<trace-function-key>]."
 ---
 
 # Bitfab Improve
@@ -14,6 +14,17 @@ Use the local plugin MCP tools (`mcp__Bitfab__list_trace_functions`, `mcp__Bitfa
 - Recommend an option first, explain why in one line
 - Present 2-5 concrete options
 - One decision per question — never batch
+
+This skill has three invocation modes. `all` walks every phase. The two sub-modes do one focused thing each — building a labeled dataset, or running experiments against an existing one — and require the trace function key as the argument because they skip the function picker (Phase 1) and instrumentation/replay verification (Phase 2).
+
+| Invocation | Action |
+|---|---|
+| `$bitfab:improve` or `$bitfab:improve all` | Full flow: pick function → verify instrumentation → label dataset → diagnose → iterate → wrap up |
+| `$bitfab:improve dataset <key>` | Build or extend the labeled dataset for one function, then stop. No experiments run |
+| `$bitfab:improve experiment <key>` | Run experiments to fix failing traces against an existing labeled dataset, then wrap up. No dataset labeling happens here — if the function has no validated dataset yet, run `$bitfab:improve dataset <key>` first |
+
+In sub-modes, grep the codebase for `<key>` early so labeling and experiments are grounded in the actual instrumented function (the full flow does this in Phase 2; sub-modes skip Phase 2 entirely).
+
 
 🚨 **Blocking-process rule (applies to any plugin command described as "blocks until the user does X"):** When you launch a plugin CLI that blocks on a browser handoff (`startDataset.js`, `login.js`, etc.), you MUST keep the exec session alive and keep polling it until the process exits on its own.
 
@@ -48,9 +59,11 @@ Use the local plugin MCP tools (`mcp__Bitfab__list_trace_functions`, `mcp__Bitfa
    Watch the output and route on it:
 
    - **not authenticated** — stop the flow immediately. Tell the user to run `$bitfab:setup login` first
-   - **authenticated (with or without a `v<X> available` upgrade notice)** — continue to Phase 1. If an upgrade notice appeared, pass it through to the user verbatim — but don't block on it; surface the notice once and move on
+   - **authenticated (with or without a `v<X> available` upgrade notice)** — continue to the entry phase for this mode (Phase 1 in `all`, Phase 3 in `dataset`, Phase 5 in `experiment`). If an upgrade notice appeared, pass it through to the user verbatim — but don't block on it; surface the notice once and move on
 
 ## Phase 1: Identify the Trace Function
+
+**Run only when mode is `all`.**
 
 If a `traceFunctionKey` was provided as an argument, skip the listing and the user prompt — but still cross-check the provided key against the local codebase before moving on. Otherwise, work through all four steps below:
 
@@ -63,6 +76,8 @@ If a `traceFunctionKey` was provided as an argument, skip the listing and the us
 4. **Skip this step if a `traceFunctionKey` argument was provided** — the function is already chosen. Otherwise, ask the user with 2 options: the recommended function (prefer one that is ✅ instrumented here AND has recent activity) and a free-text "Type a function key" option. If nothing is instrumented here, say so explicitly in the question — don't hide it.
 
 ## Phase 2: Verify Instrumentation & Replay
+
+**Run only when mode is `all`.**
 
 Check that this trace function has both instrumentation and a replay script.
 
@@ -104,7 +119,11 @@ Check that this trace function has both instrumentation and a replay script.
 
 ## Phase 3: Build Dataset via Labeling
 
+**Run only when mode is `all` or `dataset`.**
+
 Build a dataset of labeled traces. If there are already enough validated traces, use them directly. Otherwise, the agent labels candidate traces and opens the labeling page for the user to approve or correct them.
+
+In `dataset` mode this phase is the entry point — Phase 1 (function picker) and Phase 2 (instrumentation/replay verification) are skipped, so the trace function key comes from the argument. Before calling `mcp__Bitfab__search_traces`, grep the codebase for the key (e.g. `grep -r "<traceFunctionKey>" --include="*.ts" --include="*.tsx" --include="*.py" --include="*.rb" --include="*.go" --include="*.baml"`) and note the file path — every later step ("Label them yourself", and Phase 4 "Read the code" in `all` mode) needs it.
 
 1. **Check existing validated traces** — Use `mcp__Bitfab__search_traces` with `validated: true` to find traces with validated labels (human-authored, or agent-authored and approved by a human). Count them, and check whether at least one is a failing label. Present the summary to the user as a numbered choice (e.g., "Found 8 validated traces (3 pass, 5 fail). Do you want to label more, or proceed with this dataset?"). Note: `search_traces` excludes replayed traces (traces from test runs) by default — leave `includeReplays` off when labeling, since replays have new inputs (not the original production inputs) and shouldn't be mixed in with the traces you're labeling.
 
@@ -112,7 +131,7 @@ Build a dataset of labeled traces. If there are already enough validated traces,
    > B) **Label more traces** — add more labels before proceeding *(recommended)*
 2. **Find unlabeled traces** — If more labels are needed, search again without label filters to find unlabeled traces. Use `mcp__Bitfab__read_traces` with `scope: "summary"` to read them and identify which are worth labeling — look for diverse inputs, traces that produced output (not empty), and traces that cover different scenarios. Filter out near-duplicates and uninteresting traces.
 3. **Present candidates** — Show which unlabeled traces you recommend labeling and why. Include the already-labeled trace count for context (e.g., "4 traces already labeled, recommending 5 more for labeling"). Let the user approve, adjust, or skip.
-4. **Label them yourself FIRST (mandatory before opening the labeling page)** — Once the user approves the candidate traces, **you** label them. Call `mcp__Bitfab__read_traces` with `scope: "full"` on the approved trace IDs (batch them — up to 10 per call), read each trace's inputs / output / spans yourself, and decide for each one whether it looks like a PASS or a FAIL. **Ground your judgment in the codebase, not just the trace text.** Before you start labeling, read the instrumented function in the user's source (you found it in Phase 2) and any nearby code that explains intent — comments, docstrings, README sections, related tests, BAML files — so you know what the function is *supposed* to do and what "good" looks like for it. Apply the same context to every trace: does this output achieve the function's goal as expressed in the code? Does it match the patterns in the already-validated traces? Then call `mcp__Bitfab__update_agent_labels` once with an array of `{ traceId, label, annotation }` objects — **both `label` (true for pass, false for fail) and `annotation` (a one-or-two-sentence explanation written for the human reviewer, ideally referencing what the code is trying to do) are required for every trace**. Commit to a verdict — if you genuinely cannot decide, you didn't read the trace or the code carefully enough. The labels you save here start unapproved; they only become part of the validated dataset once a human approves them in the labeling page.
+4. **Label them yourself FIRST (mandatory before opening the labeling page)** — Once the user approves the candidate traces, **you** label them. Call `mcp__Bitfab__read_traces` with `scope: "full"` on the approved trace IDs (batch them — up to 10 per call), read each trace's inputs / output / spans yourself, and decide for each one whether it looks like a PASS or a FAIL. **Ground your judgment in the codebase, not just the trace text.** Before you start labeling, read the instrumented function in the user's source (located in Phase 2 in `all` mode, or via the grep step in this phase's intro in `dataset` mode) and any nearby code that explains intent — comments, docstrings, README sections, related tests, BAML files — so you know what the function is *supposed* to do and what "good" looks like for it. Apply the same context to every trace: does this output achieve the function's goal as expressed in the code? Does it match the patterns in the already-validated traces? Then call `mcp__Bitfab__update_agent_labels` once with an array of `{ traceId, label, annotation }` objects — **both `label` (true for pass, false for fail) and `annotation` (a one-or-two-sentence explanation written for the human reviewer, ideally referencing what the code is trying to do) are required for every trace**. Commit to a verdict — if you genuinely cannot decide, you didn't read the trace or the code carefully enough. The labels you save here start unapproved; they only become part of the validated dataset once a human approves them in the labeling page.
 
    > 🚨 **HARD RULE — DO NOT SKIP:** You MUST call `mcp__Bitfab__update_agent_labels` with verdicts for every approved trace BEFORE running `startDataset.js` to open the labeling page. Sending the user into the labeling page without pre-labeled verdicts is a process violation. This is non-negotiable.
 
@@ -139,9 +158,11 @@ Build a dataset of labeled traces. If there are already enough validated traces,
    - **gate passes (at least one validated failing label)** — get explicit approval, then continue
 
    Unapproved agent labels do **not** satisfy this gate by design — `validated: true` excludes them.
-9. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep it in your working context throughout.
+9. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep it in your working context throughout. In `dataset` mode the skill stops here — surface the dataset summary to the user and exit so they can pick up with `$bitfab:improve experiment <key>` later.
 
 ## Phase 4: Diagnose & Plan
+
+**Run only when mode is `all`.**
 
 1. **Understand failures.** Using the failed traces you read in Phase 3 (or read them now if you haven't):
 
@@ -150,7 +171,7 @@ Build a dataset of labeled traces. If there are already enough validated traces,
    Synthesize the failure patterns — what's going wrong, what the common threads are.
 2. **Read the code.**
 
-   - Find the instrumented function in the codebase (you found it in Phase 2)
+   - Find the instrumented function in the codebase (in `all` mode you found it in Phase 2; this step is unreachable in `dataset` / `experiment` modes)
    - Read the full implementation — follow the call chain to understand the logic
    - Identify **iteration targets**: prompts, system messages, parameters, preprocessing, postprocessing
    - If BAML files are involved, read the relevant `.baml` files
@@ -186,11 +207,25 @@ Build a dataset of labeled traces. If there are already enough validated traces,
 
 Run an iterative improvement loop. Each iteration:
 
-1. **Make the change.**
+1. **Run only when mode is `experiment`.**
+
+   The trace function key comes from the argument and no prior phase has run. Rehydrate the dataset and locate the code before any experiment:
+
+   1. **Grep the codebase** for the trace function key (e.g. `grep -r "<traceFunctionKey>" --include="*.ts" --include="*.tsx" --include="*.py" --include="*.rb" --include="*.go" --include="*.baml"`) and note the file path. This is the code you'll iterate on.
+   2. **Fetch the validated dataset** — call `mcp__Bitfab__search_traces` with `validated: true` to get the validated trace IDs for the function, then `mcp__Bitfab__read_traces` with `scope: "full"` on those IDs to load labels + annotations into context.
+   3. **Branch on the result:**
+
+   - **no validated traces (or no validated failing labels)** — tell the user the function has no labeled dataset yet and recommend running `$bitfab:improve dataset <key>` first; stop the flow
+   - **validated dataset loaded (≥1 failing label)** — summarize the dataset for the user (counts of pass/fail) and the failure annotations. Pick a first experiment from the failure patterns and continue
+2. **Run only when mode is `all` or `experiment`.**
+
+   **Make the change.**
 
    - Explain to the user what you're changing and why, and confirm before editing
    - Edit the iteration target (prompt, code, tools, parameters)
-2. **Replay against the dataset.** Collect the trace IDs from the labeled dataset (Phase 3). Run the replay script with those specific traces.
+3. **Run only when mode is `all` or `experiment`.**
+
+   **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `all` mode, or rehydrated at the start of this phase in `experiment` mode). Run the replay script with those specific traces.
 
    ```bash
    # The exact command depends on the replay script — adapt to what exists
@@ -199,13 +234,17 @@ Run an iterative improvement loop. Each iteration:
    ```
 
    **Before running: verify the replay script prints the full original and new output values to stdout for every item** (not just lengths, counts, hashes, or truncated previews). If it doesn't, fix the script first — the Replay Output Contract and example script live in the SDK reference at `https://docs.bitfab.ai/<language>-sdk#replay`. Subagents can't evaluate an improvement from `5 → 7 (+2)`.
-3. **Evaluate against labels & annotations.** Read the replay output. For each trace in the dataset, use the label (pass/fail) and annotation from Phase 3 to judge whether the new output is an improvement:
+4. **Run only when mode is `all` or `experiment`.**
+
+   **Evaluate against labels & annotations.** Read the replay output. For each trace in the dataset, use the label (pass/fail) and annotation (from Phase 3, or rehydrated at the start of this phase in `experiment` mode) to judge whether the new output is an improvement:
 
    - For traces labeled **fail**: Does the new output address the issue described in the annotation? The annotation explains what went wrong — use it as the acceptance criteria.
    - For traces labeled **pass**: Did the replay preserve the correct behavior, or did it regress?
    - Record the results into a tmp file if the dataset/context is too big so you can recall it later easily.
    - Return the results of the sub agent if you are in one to the main agent.
-4. **Share results to the user.**
+5. **Run only when mode is `all` or `experiment`.**
+
+   **Share results to the user.**
 
    > "After N experiments these are the results: X/Y traces now pass.
    >
@@ -224,6 +263,8 @@ Run an iterative improvement loop. Each iteration:
    > B) **Stop and wrap up** — move to the final summary
 
 ## Phase 6: Validate & Wrap Up
+
+**Run only when mode is `all` or `experiment`.**
 
 1. **Summary.** Present the final results similar to this. You may expand where appropriate based on context from the user:
 
