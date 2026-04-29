@@ -234,6 +234,8 @@ Run an iterative improvement loop. Each iteration:
    ```
 
    **Before running: verify the replay script prints the full original and new output values to stdout for every item** (not just lengths, counts, hashes, or truncated previews). If it doesn't, fix the script first — the Replay Output Contract and example script live in the SDK reference at `https://docs.bitfab.ai/<language>-sdk#replay`. Subagents can't evaluate an improvement from `5 → 7 (+2)`.
+
+   **Capture the `testRunId` from the replay output** — the SDK prints it (alongside `testRunUrl`) when the run completes. Track every `testRunId` produced across all iterations of this phase: you'll feed them to `open-experiments` so the user can review every experiment side-by-side in one viewer.
 4. **Run only when mode is `all` or `experiment`.**
 
    **Evaluate against labels & annotations.** Read the replay output. For each trace in the dataset, use the label (pass/fail) and annotation (from Phase 3, or rehydrated at the start of this phase in `experiment` mode) to judge whether the new output is an improvement:
@@ -243,6 +245,17 @@ Run an iterative improvement loop. Each iteration:
    - Record the results into a tmp file if the dataset/context is too big so you can recall it later easily.
    - Return the results of the sub agent if you are in one to the main agent.
 5. **Run only when mode is `all` or `experiment`.**
+
+   **Open the experiment viewer.** Run the open-experiments command with **every** `testRunId` you've collected across iterations of this phase (comma-separated). The viewer renders each experiment as a card so the user can compare pass/fail counts and drill into individual traces side-by-side.
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openExperiments.js" <testRunId1>,<testRunId2>,<testRunId3>
+   ```
+
+   The command opens a browser window and exits immediately — do **not** wait for it, and do **not** poll. Continue straight to `share-results`. The viewer is a parallel review surface for the human; your textual summary in the next step is still required.
+
+   If no `testRunId`s were captured (e.g. the replay script didn't print them), skip this step and continue — but flag it to the user in `share-results` so the script can be fixed before the next iteration.
+6. **Run only when mode is `all` or `experiment`.**
 
    **Share results to the user.**
 
