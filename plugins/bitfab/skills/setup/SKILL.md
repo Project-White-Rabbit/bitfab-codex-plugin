@@ -10,7 +10,7 @@ description: "Set up Bitfab tracing — authenticate, instrument, modify, and cr
 - Present 2-5 concrete options
 - One decision per question — never batch
 
-**🚨 Blocking-process rule (applies to any plugin command described as "blocks until the user does X"):** When you launch a plugin CLI that blocks on a browser handoff (`login.js`, `startDataset.js`, etc.), you MUST keep the exec session alive and keep polling it until the process exits on its own.
+**🚨 Blocking-process rule (applies to any plugin command described as "blocks until the user does X"):** When you launch a plugin CLI that blocks on a browser handoff (`login.js`, `startDataset.js`, `openTracePlan.js`, etc.), you MUST keep the exec session alive and keep polling it until the process exits on its own.
 
 - Printing the URL is NOT completion. The process is still running, racing a loopback callback and a server-polled ticket — it exits only after the user's browser action delivers a result (or after the timeout).
 - After sending the URL to the user, keep polling the live shell/exec session every few seconds with your normal "read more output" tool. Do not idle waiting for a user message.
@@ -106,7 +106,7 @@ Authenticate with Bitfab and retrieve the API key.
    ```bash
    node "${BITFAB_PLUGIN_DIR}/dist/commands/login.js"
    ```
-   
+
    Run with 600000ms (10 minute) timeout. This opens the browser to a URL that **races two delivery paths**: a loopback HTTP callback on 127.0.0.1, and a server-polled handoff ticket (PKCE). Whichever resolves first wins — the ticket path works fine even when the CLI is sandboxed (Codex seatbelt, containers, SSH, cloud IDEs) because the browser delivers the token to the server and the CLI polls for it.
 
    **Per the Blocking-process rule at the top:** after `login.js` prints its URL, keep polling the live exec session until it exits. Do not send a "waiting for you to sign in" message and then idle — the user's sign-in will NOT arrive as a chat message; it arrives as `login.js` exiting with `Logged in as <email>` on stdout.
@@ -216,7 +216,27 @@ Bitfab captures every AI function call — inputs, outputs, and errors — so yo
 
    **One flow = one trace function key.** When an outer `@bitfab.span` / `withSpan` / `bitfab_span` and a framework handler wrap the same work (LangGraph `get_langgraph_callback_handler`, Claude Agent SDK `get_claude_agent_handler`), pass the **same key** to both — a second key splits one flow into two overlapping trace functions. Separate trace functions describe separate flows with their own standalone roots, never a sub-range of an outer flow.
 
-   Then present the trace plan **using the format defined in the "Trace Plan Format" reference section below** (legend → grammar → template precedence → canonical example). **STOP** — ask the user to confirm before writing code.
+   Then post the plan to the browser confirmation UI via `mcp__Bitfab__create_trace_plan` and open it with the `openTracePlan.js` CLI — that command races a loopback callback and a server-polled handoff ticket so the browser → CLI hand-off works on SSH, Docker, WSL, cloud IDEs, etc. Same delivery pattern as `login.js` and `startDataset.js`.
+
+   - Build a `TracePlanTree` (`{ rootId, nodes: { [id]: TraceNode } }`) from the same span tree you'd otherwise render. Each `TraceNode` carries `id` (stable, e.g. hash of `file:line:name`), `name`, `kind` ("manual" | "auto" | "pure"), `file`, `line`, `signature`, `parentId`, `childIds`, plus `framework` (for `[auto]` lines).
+   - **Every captured node MUST include `sampleInput` and `sampleOutput`.** Without samples the confirmation page can't show the user what gets captured, which is the whole point. Construct realistic example values from the function's parameter and return types (Read the file and its return-type imports if needed); for SDK calls (`openai.chat.completions.create`, `generateText`, `cohere.rerank`, etc.) use the documented response shape. Do NOT call `create_trace_plan` with a captured node missing either field.
+   - Call `mcp__Bitfab__create_trace_plan` with `{ language, tree, capturedNodeIds }` (and `stats` if you have a sample run) — `capturedNodeIds` is your initial recommendation, must form a connected sub-tree (selecting any descendant implies its ancestors). The tool returns a plan id (and a `https://bitfab.ai/trace-plan/<id>` URL).
+   - Open the trace plan in the browser by running:
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openTracePlan.js" <planId>
+   ```
+
+   (`${BITFAB_PLUGIN_DIR}` resolves to the plugin directory; `<planId>` is the id returned by `mcp__Bitfab__create_trace_plan`.) The script opens the trace plan page and **blocks** until the user clicks **Confirm** or **Chat about this** in the browser (up to 30 minutes). The script prints a handoff URL (with `callbackPort=` and `ticket=` query params) — surface it to the user verbatim so they can paste it into a browser if the auto-launch didn't open one.
+
+   **Polling (mandatory — see the Blocking-process rule at the top of this skill):** after surfacing the URL, keep polling the live exec session until the process exits. Do NOT stop after printing the URL. Do NOT wait for a chat message from the user — their confirmation arrives as stdout on the already-running process, not as a new prompt. Poll every few seconds until one of these terminal conditions, then route accordingly:
+
+   - On exit, parse the final stdout line:
+     - `Trace plan confirmed [via …]` — the user confirmed in the browser. Call `mcp__Bitfab__get_trace_plan` with the plan id to read the authoritative `capturedNodeIds` for step 11. If it differs from your initial recommendation, prune `[auto]` lines whose ancestor manual span was uncaptured, and drop manual `●` wraps that aren't in the set.
+     - `Trace plan cancelled [via …]` — the user aborted from the browser. Tell them the trace setup was dropped and ask what they'd like to do instead. Do not write instrumentation.
+     - non-zero exit / timeout — surface the error to the user. Do not write instrumentation.
+
+   **Inline fallback** (use only if `mcp__Bitfab__create_trace_plan` errors, e.g. offline or MCP unreachable): present the trace plan **using the format defined in the "Trace Plan Format" reference section below** (legend → grammar → template precedence → canonical example). **STOP** — ask the user to confirm before writing code.
 11. **Write instrumentation AND the replay pipeline for this trace function in the same cycle — batched into a single message of tool calls.** Instrumentation edits go in one apply_patch / set of Edit calls; the replay script (new or updated `scripts/replay.*`) goes in the same turn. Skip the replay script entirely for Go-only projects (Go does not support replay).
 
    - **11a. Instrumentation edits** — follow the SDK reference exactly, purely additive. Never change behavior, arguments, return values, error handling, variable names, types, control flow, or code structure. Batch repetitive edits in parallel (one message, many Edit calls); for large mechanical fan-outs (>10 files of the same wrapper pattern), validate the pattern on one file, then do the remaining files.
