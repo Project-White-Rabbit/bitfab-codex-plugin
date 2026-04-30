@@ -42,7 +42,7 @@ In sub-modes, grep the codebase for `<key>` early so labeling and experiments ar
    if [ -z "$BITFAB_PLUGIN_DIR" ]; then
      BITFAB_PLUGIN_DIR=$(
        hit=$(find "${CODEX_HOME:-$HOME/.codex}/plugins/cache" -maxdepth 6 -type f -name status.js \
-         \( -path '*/bitfab-dev/bitfab/local/dist/commands/*' \
+         \( -path '*/bitfab-internal/bitfab/local/dist/commands/*' \
          -o -path '*/bitfab/bitfab/*/dist/commands/*' \) 2>/dev/null | head -1)
        echo "${hit%/dist/commands/status.js}"
      )

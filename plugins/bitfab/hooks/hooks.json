@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'for d in \"${CODEX_HOME:-$HOME/.codex}/plugins/cache/bitfab-dev/bitfab/local\" \"${CODEX_HOME:-$HOME/.codex}/plugins/cache\"/*/bitfab/*; do [ -x \"$d/scripts/session-start\" ] && exec \"$d/scripts/session-start\"; done; exit 0'",
+            "command": "sh -c 'for d in \"${CODEX_HOME:-$HOME/.codex}/plugins/cache/bitfab-internal/bitfab/local\" \"${CODEX_HOME:-$HOME/.codex}/plugins/cache\"/*/bitfab/*; do [ -x \"$d/scripts/session-start\" ] && exec \"$d/scripts/session-start\"; done; exit 0'",
             "statusMessage": "Checking Bitfab status"
           }
         ]

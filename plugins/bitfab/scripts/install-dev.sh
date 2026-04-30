@@ -16,7 +16,7 @@ REPO_ROOT="$(cd "$PLUGIN_DIR/.." && pwd)"
 
 VENDOR_DIR="$PLUGIN_DIR/tmp"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-CACHE_DIR="$CODEX_HOME/plugins/cache/bitfab-dev/bitfab/local"
+CACHE_DIR="$CODEX_HOME/plugins/cache/bitfab-internal/bitfab/local"
 CONFIG_TOML="$CODEX_HOME/config.toml"
 
 cd "$REPO_ROOT"
@@ -31,7 +31,7 @@ echo "==> Vendoring into $VENDOR_DIR"
 rm -rf "$VENDOR_DIR"
 mkdir -p "$VENDOR_DIR"
 scripts/vendor-bitfab-plugin.sh \
-  bitfab-codex-plugin .codex-plugin "$VENDOR_DIR" plugins/bitfab bitfab-dev
+  bitfab-codex-plugin .codex-plugin "$VENDOR_DIR" plugins/bitfab bitfab-internal
 
 # Hoisted node_modules — Codex's copy routine drops symlinks, which would
 # strip zod and @modelcontextprotocol/sdk from an isolated pnpm layout.
@@ -43,7 +43,7 @@ rm -rf "$CACHE_DIR"
 mkdir -p "$(dirname "$CACHE_DIR")"
 cp -R "$VENDOR_DIR/plugins/bitfab" "$CACHE_DIR"
 
-echo "==> Ensuring marketplaces.bitfab-dev block in $CONFIG_TOML"
+echo "==> Ensuring marketplaces.bitfab-internal block in $CONFIG_TOML"
 node "$SCRIPT_DIR/codex-config.mjs" ensure-dev "$CONFIG_TOML" "$VENDOR_DIR"
 
 echo "==> Verifying install"

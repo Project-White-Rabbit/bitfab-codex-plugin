@@ -102,34 +102,59 @@ function quote(s) {
   return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
 }
 
+function removeSection(content, header) {
+  if (!content.length) {
+    return content
+  }
+  const lines = content.split("\n")
+  const section = locateSection(lines, header)
+  if (!section) {
+    return content
+  }
+  let end = section.end
+  while (end > section.start && lines[end - 1].trim() === "") {
+    end--
+  }
+  lines.splice(section.start, end - section.start)
+  while (lines.length && lines[lines.length - 1].trim() === "") {
+    lines.pop()
+  }
+  return lines.length ? `${lines.join("\n")}\n` : ""
+}
+
 function ensureDev(vendorPath) {
   if (!vendorPath) {
     usage()
   }
   const absVendor = path.resolve(vendorPath)
   let content = readConfig()
+  // Migrate away from the legacy bitfab-dev marketplace name. Idempotent.
+  content = removeSection(content, "[marketplaces.bitfab-dev]")
+  content = removeSection(content, '[plugins."bitfab@bitfab-dev"]')
   content = setKey(
     content,
-    "[marketplaces.bitfab-dev]",
+    "[marketplaces.bitfab-internal]",
     "source_type",
     quote("local"),
   )
   content = setKey(
     content,
-    "[marketplaces.bitfab-dev]",
+    "[marketplaces.bitfab-internal]",
     "source",
     quote(absVendor),
   )
   content = setKey(
     content,
-    '[plugins."bitfab@bitfab-dev"]',
+    '[plugins."bitfab@bitfab-internal"]',
     "enabled",
     "false",
     { onlyIfMissing: true },
   )
   writeConfig(content)
-  console.log(`[codex-config] marketplaces.bitfab-dev.source = ${absVendor}`)
-  console.log(`[codex-config] plugins."bitfab@bitfab-dev" block ensured`)
+  console.log(
+    `[codex-config] marketplaces.bitfab-internal.source = ${absVendor}`,
+  )
+  console.log(`[codex-config] plugins."bitfab@bitfab-internal" block ensured`)
 }
 
 function toggle(variant) {
@@ -141,14 +166,14 @@ function toggle(variant) {
   let content = readConfig()
   content = setKey(
     content,
-    '[plugins."bitfab@bitfab-dev"]',
+    '[plugins."bitfab@bitfab-internal"]',
     "enabled",
     devEnabled,
   )
   content = setKey(content, '[plugins."bitfab@bitfab"]', "enabled", prodEnabled)
   writeConfig(content)
   console.log(
-    `[codex-config] plugins."bitfab@bitfab-dev".enabled = ${devEnabled}`,
+    `[codex-config] plugins."bitfab@bitfab-internal".enabled = ${devEnabled}`,
   )
   console.log(`[codex-config] plugins."bitfab@bitfab".enabled = ${prodEnabled}`)
 }
