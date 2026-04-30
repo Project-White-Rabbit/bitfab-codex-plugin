@@ -220,7 +220,12 @@ Bitfab captures every AI function call — inputs, outputs, and errors — so yo
 
    - Build a `TracePlanTree` (`{ rootId, nodes: { [id]: TraceNode } }`) from the same span tree you'd otherwise render. Each `TraceNode` carries `id` (stable, e.g. hash of `file:line:name`), `name`, `kind` ("manual" | "auto" | "pure"), `file`, `line`, `signature`, `parentId`, `childIds`, plus `framework` (for `[auto]` lines).
    - **Every captured node MUST include `sampleInput` and `sampleOutput`.** Without samples the confirmation page can't show the user what gets captured, which is the whole point. Construct realistic example values from the function's parameter and return types (Read the file and its return-type imports if needed); for SDK calls (`openai.chat.completions.create`, `generateText`, `cohere.rerank`, etc.) use the documented response shape. Do NOT call `create_trace_plan` with a captured node missing either field.
-   - Call `mcp__Bitfab__create_trace_plan` with `{ language, tree, capturedNodeIds }` (and `stats` if you have a sample run) — `capturedNodeIds` is your initial recommendation, must form a connected sub-tree (selecting any descendant implies its ancestors). The tool returns a plan id (and a `https://bitfab.ai/trace-plan/<id>` URL).
+   - **Include surrounding code as `pure` context nodes** so the captured set is legible inside its codebase context and the user can toggle additional nodes into the capture directly in the UI without leaving the page. The test for inclusion is **"would the user plausibly want this as its own span?"** — anything they might promote to a wider root, wrap as a deeper child, or add as a peer at the same depth. Walk in three directions:
+     - **~10 callers above the root** — candidates for **promoting the root upward** to a wider scope. Walk via Grep (callers of the root, then callers of those, etc.) and attach each as a `pure` ancestor. Stop at process entry points (HTTP handlers, queue workers, CLI `main`, cron jobs, page handlers, framework boot — there is no useful root above those) or when you've gathered ~10 nodes.
+     - **~10 callees below each leaf** — candidates for **wrapping deeper spans**. For every captured leaf, walk downward (callees of that leaf, callees of those, etc.) and attach each as a `pure` descendant. Include any callee the user might plausibly want as its own span — LLM / tool / agent calls, prompt construction, response parsing, retry loops, fan-outs, post-processing that drives another model. Stop at pure plumbing (pass-through returns, trivial formatting or arithmetic, no further interesting activity) or ~10 nodes per leaf. **Don't stop just because you crossed an SDK / framework / stdlib boundary** — the test is "is this plausibly its own span?", not "is this in our code?".
+     - **~5 siblings per captured non-root node** — candidates for **peer spans at the same depth**. For each captured non-root node, include the parent's other callees (other functions invoked from the same wrapper) as `pure` siblings. These are the nodes the user might wrap alongside the existing capture to widen the trace sideways.
+     All surrounding nodes get `kind: "pure"` and are **not** included in `capturedNodeIds`. They serve two ends: **legibility** (the captured set sits inside its surrounding code so the user sees what is and isn't traced) and **modification** (they are the levers in the UI for expanding capture deeper, broader, or sideways).
+   - Call `mcp__Bitfab__create_trace_plan` with `{ language, tree, capturedNodeIds, traceFunctionKey }` (and `stats` if you have a sample run) — `capturedNodeIds` is your initial recommendation, must form a connected sub-tree (selecting any descendant implies its ancestors). `traceFunctionKey` is the key you'll pass to `getFunction` / `get_function` / `bitfab_function` / `WithFunctionName` in step 11; persisting it lets future Modify cycles bootstrap their `before` tree from this plan via `get_trace_plan({ traceFunctionKey })` instead of re-deriving from code. The tool returns a plan id (and a `https://bitfab.ai/trace-plan/<id>` URL).
    - Open the trace plan in the browser by running:
 
    ```bash
@@ -271,52 +276,66 @@ Bitfab captures every AI function call — inputs, outputs, and errors — so yo
 
 Adjust an **existing** trace setup. Requires existing SDK usage in the codebase — if none exists, run Instrument first. Triggered explicitly by `$bitfab:setup modify`, or selected from the choice prompt at Instrument step 2 when existing SDK usage is found.
 
-Every Modify cycle targets **exactly one** trace function and picks **exactly one** of five directions. Never batch multiple trace functions or mix directions in one cycle — if the user wants more, loop via the step 9 menu.
+Every Modify cycle targets **exactly one** trace function. Never batch multiple trace functions in one cycle — if the user wants more, loop via the step 7 menu.
 
 1. **Gather existing trace functions** by searching for SDK patterns (`getFunction("key")`, `get_function("key")`, `bitfab_function "key"`, `WithFunctionName("key")`). List each key alongside its root function. If none are found, tell the user Modify needs existing instrumentation and suggest `$bitfab:setup instrument`.
 2. **Pick exactly ONE trace function to modify.** Ask the user with the list of existing keys. Recommend the one the user most recently instrumented (or the one most recently referenced in the current session) and explain why in one line.
-3. **Reconstruct the current trace plan.** Read the instrumented files to map the existing span tree. Render it as the "before" plan using the Default view template from the **Trace Plan Format** reference section. Do not present it yet — it becomes the left-hand side of the diff in step 6.
-4. **Pick exactly ONE direction.** Ask the user with all five directions below — recommend the one that matches the user's original ask and explain why in one line. Never mix directions in a single cycle.
+3. **Bootstrap the `before` `TracePlanTree` from the most recent confirmed trace plan for this trace function key**, falling back to reading the code only when no prior plan exists. The plan from the previous Instrument or Modify cycle is the source of truth for what's currently captured — re-deriving from code drops sample inputs/outputs and surrounding-context nodes the user previously confirmed.
 
-   | # | Direction | What changes | What must stay the same |
-   |---|---|---|---|
-   | 1 | **Add context** | Add `addContext`/`setContext`/metadata calls, or insert span(s) between the existing root and an existing descendant, without changing the root or the deepest leaf | Root, deepest leaf, overall depth |
-   | 2 | **Increase depth** | Wrap currently-skipped callees inside existing spans as new instrumented children (new leaves deeper in the tree) | Root, existing siblings at each level |
-   | 3 | **Reduce depth** | Remove `withSpan`/`@span` wrappers from the deepest instrumented spans, or un-nest them into siblings of their parent | Root, the underlying function call (arguments, return value, control flow) |
-   | 4 | **Move root upstream** | Replace the root with a **caller** of the current root (wider scope) | All existing descendants remain under the new root |
-   | 5 | **Move root downstream** | Replace the root with a **callee** of the current root (narrower scope) | Interesting LLM/tool activity still sits under the new root |
-5. **Build the modified trace plan under the same PURELY ADDITIVE constraint as Instrument step 10.** The modified tree must be implementable without behavior changes. If the chosen direction requires awaiting a stream that wasn't awaited, delaying a call, reordering operations, blocking a callback, or restructuring control flow, the direction is invalid for this cycle — tell the user which direction doesn't fit and why, then return to step 4 for a different direction (or suggest splitting into multiple cycles). Never present a behavior-changing approach as an option.
+   1. Call `mcp__Bitfab__get_trace_plan` with `{ traceFunctionKey: "<chosen key>" }` (no `planId`). Two outcomes:
+      - **Prior plan found** — parse the JSON block in the response. Use its `tree` as the `before` `TracePlanTree` and its `capturedNodeIds` as the current capture set. You do not need to re-read the instrumented files. Skip step 2.
+      - **"No prior confirmed trace plan found"** — there is no plan for this key yet (key created outside the skill, or first Modify cycle that predates this column). Fall through to step 2.
+   2. **Code-reading fallback.** Read the instrumented files to map the existing span tree into a `TracePlanTree` (`{ rootId, nodes: { [id]: TraceNode } }`, same shape used in Instrument step 10). Each `TraceNode` carries `id`, `name`, `kind` ("manual" | "auto" | "pure"), `file`, `line`, `signature`, `parentId`, `childIds`, plus `framework` for `[auto]` lines.
 
-   Direction-specific rules:
-   - **Add context** — list the exact context keys/values to capture and the span they attach to. If inserting an intermediate span, read the intermediate function's signature for accurate parameter/return names.
-   - **Increase depth** — read the signatures of the callees you'll wrap. Each new span needs a type annotation (`function`, `llm`, `tool`, `agent`, `handoff`).
-   - **Reduce depth** — list each span to remove by name. Removing a wrapper must not delete any real function call — removing an instrumented wrapper leaves the underlying call in place.
-   - **Move root upstream** — read the new caller's signature. The new root must still be a common ancestor of every existing LLM/tool span; if the caller fans out to parallel work unrelated to this trace function, upstream is invalid.
-   - **Move root downstream** — the new root must still cover the interesting LLM/tool activity. If critical LLM spans live outside the downstream callee, downstream is invalid.
-6. **Present a before/after diff** using the **Trace Plan Format** reference section:
+   Either way, hold the `before` tree in memory — it seeds the `after` tree you build in step 4 and becomes the left-hand side of the inline-fallback diff in step 5. Do not present it yet.
+4. **Build the modified trace plan as a `TracePlanTree` under the same PURELY ADDITIVE constraint as Instrument step 10.** Start from the `before` tree built in step 3 and produce an `after` tree of the same shape (`{ rootId, nodes: { [id]: TraceNode } }`) that applies the user's requested modifications. Reuse node ids unchanged for nodes that survive — that lets the trace plan UI show only what actually changes — and mint new ids for added nodes.
 
+   **If the user didn't request anything specific** (no modifications were named in the skill invocation or earlier in the conversation), produce an `after` tree identical to the `before` tree. Don't invent changes. The user will edit the capture set directly in the UI in step 5.
+
+   The modified tree must be implementable without behavior changes. If a requested modification requires awaiting a stream that wasn't awaited, delaying a call, reordering operations, blocking a callback, or restructuring control flow, tell the user which part doesn't fit and why, and ask them to refine the request (or suggest splitting into multiple cycles). Never present a behavior-changing approach as an option.
+
+   **Every captured node MUST include `sampleInput` and `sampleOutput`** — same hard rule as Instrument step 10. Carry samples forward unchanged for surviving nodes; for newly added nodes (intermediate spans, deeper leaves, a new upstream/downstream root), construct realistic example values from the function's parameter and return types (Read the file and its return-type imports if needed). Do not advance to step 5 with a captured node missing either field.
+
+   **Include surrounding code as `pure` context nodes** so the modified capture is legible inside its codebase context and the user can toggle additional nodes into the capture directly in the UI without leaving the page. The test for inclusion is **"would the user plausibly want this as its own span?"** — anything they might promote to a wider root, wrap as a deeper child, or add as a peer at the same depth. Walk in three directions:
+   - **~10 callers above the root** — candidates for **promoting the root upward** to a wider scope. Walk via Grep (callers of the root, then callers of those, etc.) and attach each as a `pure` ancestor. Stop at process entry points (HTTP handlers, queue workers, CLI `main`, cron jobs, page handlers, framework boot — there is no useful root above those) or when you've gathered ~10 nodes.
+   - **~10 callees below each leaf** — candidates for **wrapping deeper spans**. For every existing leaf in the captured sub-tree, walk downward (callees of that leaf, callees of those, etc.) and attach each as a `pure` descendant. Include any callee the user might plausibly want as its own span — LLM / tool / agent calls, prompt construction, response parsing, retry loops, fan-outs, post-processing that drives another model. Stop at pure plumbing (pass-through returns, trivial formatting or arithmetic, no further interesting activity) or ~10 nodes per leaf. **Don't stop just because you crossed an SDK / framework / stdlib boundary** — the test is "is this plausibly its own span?", not "is this in our code?".
+   - **~5 siblings per captured non-root node** — candidates for **peer spans at the same depth**. For each captured non-root node, include the parent's other callees (other functions invoked from the same wrapper) as `pure` siblings. These are the nodes the user might wrap alongside the existing capture to widen the trace sideways.
+
+   Mark every surrounding node with `kind: "pure"` (uncaptured) and **do not** add their ids to `capturedNodeIds`. They serve two ends: **legibility** (the captured set sits inside its surrounding code so the user sees what is and isn't traced) and **modification** (they are the levers in the UI for expanding capture deeper, broader, or sideways).
+
+   When applying a requested modification, read the relevant signatures so the plan stays accurate: for added context, name the exact keys/values and the span they attach to; for new instrumented spans, read each callee's signature and pick a type annotation (`function`, `llm`, `tool`, `agent`, `handoff`); for span removals, list each by name and confirm the underlying call is left untouched; for a new upstream/downstream root, read the new function's signature and confirm it still covers the interesting LLM/tool activity (upstream) or remains a common ancestor of every LLM/tool span (downstream).
+5. **Send the modified plan straight to the trace plan UI — it is the user's primary surface for confirming or editing the change**, not the inline before/after diff. The user can adjust the captured set directly in the UI (selecting/deselecting any of the surrounding `pure` context nodes added in step 4). Confirm in the UI = apply the diff. Cancel = ask the user what they want to change. Same delivery pattern as Instrument step 10.
+
+   1. **Post the modified plan and open the UI.** Call `mcp__Bitfab__create_trace_plan` with `{ language, tree, capturedNodeIds, traceFunctionKey }` (and `stats` if you have a sample run from the existing trace function):
+      - `tree` — the modified `after` `TracePlanTree` from step 4, with the ~10 surrounding callers / ~10 surrounding callees included as `pure` context nodes.
+      - `capturedNodeIds` — your initial recommendation. Must form a connected sub-tree (selecting any descendant implies its ancestors). Surrounding `pure` context nodes are not included.
+      - `traceFunctionKey` — the existing key from step 2. Persisting it lets the next Modify cycle bootstrap from this plan.
+
+      The tool returns a plan id (and a `https://bitfab.ai/trace-plan/<id>` URL).
+
+   2. **Open the trace plan in the browser** by running:
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openTracePlan.js" <planId>
    ```
-   Before:
-   <current default-view trace plan>
 
-   After:
-   <modified default-view trace plan>
-   ```
+   (`${BITFAB_PLUGIN_DIR}` resolves to the plugin directory; `<planId>` is the id returned by `mcp__Bitfab__create_trace_plan`.) The script opens the trace plan page and **blocks** until the user clicks **Confirm** or **Cancel** in the browser (up to 30 minutes). The script prints a handoff URL (with `callbackPort=` and `ticket=` query params) — surface it to the user verbatim so they can paste it into a browser if the auto-launch didn't open one.
 
-   Below the two plans, list `Files changed:` for the edits this cycle will make — paths only, no annotations. **STOP** — ask the user:
+   **Polling (mandatory — see the Blocking-process rule at the top of this skill):** after surfacing the URL, keep polling the live exec session until the process exits. Do NOT stop after printing the URL. Do NOT wait for a chat message from the user — their confirmation arrives as stdout on the already-running process, not as a new prompt. Poll every few seconds until one of these terminal conditions, then route accordingly:
 
-   > A) **Proceed** *(recommended)*
-   > B) **Expand details** — re-render both plans in the expanded view
-   > C) **Adjust** — user wants changes — ask what
-   > D) **Cancel**
-7. **Decide the trace function key.** Directions 1–3 always keep the existing key. Directions 4–5 change the root function, so the existing key may no longer describe it. Ask the user:
+   3. **On exit, route by the final stdout line:**
+      - `Trace plan confirmed [via …]` — call `mcp__Bitfab__get_trace_plan` with `{ planId }` to read the authoritative `capturedNodeIds` (the user may have toggled `pure` context nodes into the captured set or removed previously-captured nodes in the UI). Reconcile your edit plan with what's now in `capturedNodeIds` — drop manual `●` wraps no longer captured, add wraps for any newly captured nodes — then take branch **A** (Proceed).
+      - `Trace plan cancelled [via …]` — the user cancelled from the browser. Take branch **C** (Modifications) — ask the user: what do they want to change? Their answer feeds back into step 4.
+      - non-zero exit / timeout — surface the error to the user, then fall back to the inline AskUserQuestion below.
 
-   > A) **Keep `<existing>`** — new traces continue to aggregate with historical traces on the same key (when the new root plays the same role) *(recommended)*
-   > B) **Rename to `<suggested-new-key>`** — starts a fresh trace function. Historical traces on the old key are preserved but will not appear under the new key
+   **Inline fallback** (use only if `mcp__Bitfab__create_trace_plan` errors, e.g. offline or MCP unreachable, or `openTracePlan.js` exits non-zero): present an inline before/after diff using the Default view template from the **Trace Plan Format** reference section, list `Files changed:` (paths only, no annotations), and **STOP** — ask the user:
 
-   Skip this step for directions 1–3.
-8. **Apply the changes — purely additive to behavior.** Same rules as Instrument step 11: never change arguments, return values, error handling, variable names, types, control flow, or code structure. Removing a `withSpan`/`@span` wrapper (direction 3) is the only structural edit allowed, and only when it leaves the wrapped call, its arguments, and its return value untouched. Batch repetitive edits in parallel (one message, many Edit calls).
-9. Tell the user how to run the app to generate a trace with the modified setup — exact command(s). Do NOT run it yourself. Then **MANDATORY STOP** — ask the user:
+   > A) **Proceed** — apply the diff using the confirmed capture set *(recommended)*
+   > B) **Expand details** — re-render the inline diff in the expanded view (fallback only)
+   > C) **Modifications** — ask what the user wants to change, then return to building the modified plan
+   > D) **Abort entirely** — drop this cycle without writing edits
+6. **Apply the changes — purely additive to behavior.** Same rules as Instrument step 11: never change arguments, return values, error handling, variable names, types, control flow, or code structure. Removing a `withSpan`/`@span` wrapper is the only structural edit allowed, and only when it leaves the wrapped call, its arguments, and its return value untouched. The trace function key from step 2 stays the same — do not rename keys. Batch repetitive edits in parallel (one message, many Edit calls).
+7. Tell the user how to run the app to generate a trace with the modified setup — exact command(s). Do NOT run it yourself. Then **MANDATORY STOP** — ask the user:
    > We recommend **A**: generate a trace with the modified setup so the diff is observable end-to-end.
 
    > A) **Generate a trace for the modified setup** — present the script to run; allow the user to let you run it *(recommended)*
