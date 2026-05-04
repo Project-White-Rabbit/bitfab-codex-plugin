@@ -1,6 +1,6 @@
 # Bitfab Codex Plugin
 
-Bitfab LLM evaluation tools for [OpenAI Codex CLI](https://github.com/openai/codex) — trace inspection, grader management, and SDK setup via MCP, plus `bitfab-setup` and `bitfab-improve` skills.
+Bitfab LLM evaluation tools for [OpenAI Codex CLI](https://github.com/openai/codex) — trace inspection, grader management, and SDK setup via MCP, plus `bitfab-setup` and `bitfab-assistant` skills.
 
 **Requires Codex CLI `rust-v0.121.0` or later.**
 

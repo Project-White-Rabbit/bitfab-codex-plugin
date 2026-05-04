@@ -15,7 +15,7 @@ Update the Bitfab Codex plugin and/or every workspace's SDK in the current proje
 
 ## 0. Resolve `BITFAB_PLUGIN_DIR`
 
-Codex does not inject a plugin-root env var. Resolve it first (same block used by `setup` and `improve`):
+Codex does not inject a plugin-root env var. Resolve it first (same block used by `setup` and `assistant`):
 
 ```bash
 if [ -z "$BITFAB_PLUGIN_DIR" ]; then

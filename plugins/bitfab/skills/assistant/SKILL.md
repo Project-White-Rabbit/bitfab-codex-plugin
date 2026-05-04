@@ -1,9 +1,9 @@
 ---
-name: improve
-description: "Iterate on a traced Bitfab function to improve its pass rate. Use when the user wants to review failing traces, label examples, and replay an LLM function until it passes. Invoke with $bitfab:improve [all|dataset|experiment] [<trace-function-key>]."
+name: assistant
+description: "Iterate on a traced Bitfab function to improve its pass rate. Use when the user wants to review failing traces, label examples, and replay an LLM function until it passes. Invoke with $bitfab:assistant [all|dataset|experiment] [<trace-function-key>]."
 ---
 
-# Bitfab Improve
+# Bitfab Assistant
 
 Use the local plugin MCP tools (`mcp__Bitfab__list_trace_functions`, `mcp__Bitfab__search_traces`, `mcp__Bitfab__read_traces`, `mcp__Bitfab__update_agent_labels`) to find what's failing in a traced function, gather labeled failed traces, then iterate on the code/prompts using replay until pass rates improve.
 
@@ -19,9 +19,9 @@ This skill has three invocation modes. `all` walks every phase. The two sub-mode
 
 | Invocation | Action |
 |---|---|
-| `$bitfab:improve` or `$bitfab:improve all` | Full flow: pick function → verify instrumentation → label dataset → diagnose → iterate → wrap up |
-| `$bitfab:improve dataset <key>` | Build or extend the labeled dataset for one function, then stop. No experiments run |
-| `$bitfab:improve experiment <key>` | Run experiments to fix failing traces against an existing labeled dataset, then wrap up. No dataset labeling happens here — if the function has no validated dataset yet, run `$bitfab:improve dataset <key>` first |
+| `$bitfab:assistant` or `$bitfab:assistant all` | Full flow: pick function → verify instrumentation → label dataset → diagnose → iterate → wrap up |
+| `$bitfab:assistant dataset <key>` | Build or extend the labeled dataset for one function, then stop. No experiments run |
+| `$bitfab:assistant experiment <key>` | Run experiments to fix failing traces against an existing labeled dataset, then wrap up. No dataset labeling happens here — if the function has no validated dataset yet, run `$bitfab:assistant dataset <key>` first |
 
 In sub-modes, grep the codebase for `<key>` early so labeling and experiments are grounded in the actual instrumented function (the full flow does this in Phase 2; sub-modes skip Phase 2 entirely).
 
@@ -158,7 +158,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - **gate passes (at least one validated failing label)** — get explicit approval, then continue
 
    Unapproved agent labels do **not** satisfy this gate by design — `validated: true` excludes them.
-9. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep it in your working context throughout. In `dataset` mode the skill stops here — surface the dataset summary to the user and exit so they can pick up with `$bitfab:improve experiment <key>` later.
+9. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep it in your working context throughout. In `dataset` mode the skill stops here — surface the dataset summary to the user and exit so they can pick up with `$bitfab:assistant experiment <key>` later.
 
 ## Phase 4: Diagnose & Plan
 
@@ -215,7 +215,7 @@ Run an iterative improvement loop. Each iteration:
    2. **Fetch the validated dataset** — call `mcp__Bitfab__search_traces` with `validated: true` to get the validated trace IDs for the function, then `mcp__Bitfab__read_traces` with `scope: "full"` on those IDs to load labels + annotations into context.
    3. **Branch on the result:**
 
-   - **no validated traces (or no validated failing labels)** — tell the user the function has no labeled dataset yet and recommend running `$bitfab:improve dataset <key>` first; stop the flow
+   - **no validated traces (or no validated failing labels)** — tell the user the function has no labeled dataset yet and recommend running `$bitfab:assistant dataset <key>` first; stop the flow
    - **validated dataset loaded (≥1 failing label)** — summarize the dataset for the user (counts of pass/fail) and the failure annotations. Pick a first experiment from the failure patterns and continue
 2. **Run only when mode is `all` or `experiment`.**
 
