@@ -1,15 +1,15 @@
 ---
 name: templates
-description: "Iterate on Bitfab span-rendering templates. Use when the user wants to change how a traced function's spans are rendered in the Bitfab UI. The agent edits the org's global templates via MCP while the user previews against a real trace in the browser. Invoke with $bitfab:templates [<trace-function-key>]."
+description: "Iterate on Bitfab span-rendering templates scoped to one trace function. Use when the user wants to change how a traced function's spans are rendered in the Bitfab UI. The agent edits per-function template overrides via MCP while the user previews against a real trace in the browser. Invoke with $bitfab:templates [<trace-function-key>]."
 ---
 
 # Bitfab Templates
 
-Open the chromeless **template-preview** page for one trace function and iterate on the org's global span-rendering templates with the user. Each round: the user describes what should look different, you call `mcp__Bitfab__get_template` → edit → `mcp__Bitfab__update_template`, and the user refreshes the preview to see the change rendered against a real trace. Loop until the user is satisfied.
+Open the chromeless **template-preview** page for one trace function and iterate on **that function's** span-rendering templates with the user. Each round: the user describes what should look different, you call `mcp__Bitfab__get_template` → edit → `mcp__Bitfab__update_template` **with `traceFunctionKey` set to the picked key**, and the user refreshes the preview to see the change rendered against a real trace. Loop until the user is satisfied.
 
 **MCP tools:** This skill uses `list_trace_functions`, `search_traces`, `get_template_reference`, `get_template`, and `update_template` from the **local plugin MCP server** (bundled with this plugin), exposed under the `mcp__Bitfab__*` prefix.
 
-Templates control how a span's input / output renders in the Bitfab UI. They are scoped per **span type** (`llm`, `agent`, `function`, `guardrail`, `handoff`, `custom`) and apply across the org. Editing one template affects every trace that contains a span of that type, so surface this when the user asks for a change that's narrower than "change all llm spans look like X."
+Templates control how a span's input / output renders in the Bitfab UI. They are scoped per **span type** (`llm`, `agent`, `function`, `guardrail`, `handoff`, `custom`). This skill **always passes `traceFunctionKey`** so edits become **per-function overrides**: they apply only to spans on traces of the picked function, not to other functions in the org. Resolution at render time is per-key row → org-global → file default, so the seed you see in `mcp__Bitfab__get_template` reflects whatever is currently rendering for this function. Surface this scope when the user asks for a change so they know nothing else in the org is affected.
 
 | Invocation | Action |
 |---|---|
@@ -80,12 +80,12 @@ The command **blocks until the user clicks the Close button on the page**, then 
 
 ## 6. Edit loop: change → render → confirm (poll for Close)
 
-Each round of the loop:
+Each round of the loop. **Every `mcp__Bitfab__get_template` and `mcp__Bitfab__update_template` call must include `traceFunctionKey: <key>`** (the key picked in step 1); without it you'd edit the org-global instead of this function's override.
 
 1. Ask what they want changed about the rendering. If the user names one of the six span types in their answer (`llm`, `agent`, `function`, `guardrail`, `handoff`, `custom`), use that. If they don't, ask which of the six span templates they want to edit before making any changes. Don't guess the span type from a description like "make this less verbose," since the same description fits multiple templates.
-2. Call `mcp__Bitfab__get_template` for that span type to read the **live** content (database override if present, otherwise the system default file). **Always** read before write: the prior round may have edited the same template, and overwriting blindly drops that work.
+2. Call `mcp__Bitfab__get_template` with `spanType` and `traceFunctionKey: <key>` to read the **live** content. The response labels its source: `scoped to traceFunctionKey "<key>"` (a per-key row already exists), `org-global override` (no per-key row yet — this is your seed for the first save), or `source: file <name>` (no DB rows at all). **Always** read before write: the prior round may have edited the same template, and overwriting blindly drops that work.
 3. Edit the returned source in-context. Stay inside the documented Nunjucks variables and filters (per the reference). Don't introduce `{% extends %}`; the assembler injects into `base.njk`'s content block, so extends will break composition.
-4. Call `mcp__Bitfab__update_template` with the full edited body. The tool upserts the org's global override in place (no version bump, no row juggling).
+4. Call `mcp__Bitfab__update_template` with `spanType`, `traceFunctionKey: <key>`, and the full edited body. The tool upserts the per-function row in place (no version bump, no row juggling). On the first save for a span type the row is created; subsequent edits update it.
 5. Tell the user "Refresh the preview to see the change," in one short line. Do not paste the template body back into chat.
 
 Before asking the user about another change, **check whether the background process from step 5 has exited**. The terminal signal is a line containing `Template preview closed` on stdout (the process exits 0 right after).
