@@ -7,7 +7,7 @@ description: "Iterate on Bitfab span-rendering templates. Use when the user want
 
 Open the chromeless **template-preview** page for one trace function and iterate on the org's global span-rendering templates with the user. Each round: the user describes what should look different, you call `mcp__Bitfab__get_template` → edit → `mcp__Bitfab__update_template`, and the user refreshes the preview to see the change rendered against a real trace. Loop until the user is satisfied.
 
-**MCP tools:** This skill uses `list_trace_functions`, `get_template_reference`, `get_template`, and `update_template` from the **local plugin MCP server** (bundled with this plugin), exposed under the `mcp__Bitfab__*` prefix.
+**MCP tools:** This skill uses `list_trace_functions`, `search_traces`, `get_template_reference`, `get_template`, and `update_template` from the **local plugin MCP server** (bundled with this plugin), exposed under the `mcp__Bitfab__*` prefix.
 
 Templates control how a span's input / output renders in the Bitfab UI. They are scoped per **span type** (`llm`, `agent`, `function`, `guardrail`, `handoff`, `custom`) and apply across the org. Editing one template affects every trace that contains a span of that type, so surface this when the user asks for a change that's narrower than "change all llm spans look like X."
 
@@ -57,7 +57,16 @@ Hold the reference in your working context for the rest of the loop. Do NOT call
 
 Before opening the preview, grep the codebase for the trace function key (`<key>`) so you can see what the function actually does. The user's "change" requests are usually about surfacing something domain-specific (an input field, a tool name, a context label), and knowing the function helps you map the request to the right span type and the right field path. If grep returns nothing (the function has been renamed or the user is operating on traces from a different repo), continue without it.
 
-## 4. Open the chromeless template-preview page (background)
+## 4. Verify a trace exists for the function
+
+The preview page renders the most recent trace for the function. Without at least one trace it has nothing to render, so check before opening it.
+
+Call `mcp__Bitfab__search_traces` with `{ traceFunctionKey: "<key>", limit: 1 }`. If the response contains a trace ID, continue. If the response indicates no traces exist (e.g. `No traces found matching the filter criteria.`), exit and tell the user in one short line: `No traces yet for <key>. Run your app (or the replay script) to generate one, then re-run \`$bitfab:templates <key>\` to preview.` Do NOT block waiting; the user re-invokes when they have a trace.
+
+- **trace exists** — continue and open the preview
+- **no traces yet for this function** — exit and tell the user to generate a trace and re-run
+
+## 5. Open the chromeless template-preview page (background)
 
 Launch the preview command **in the background** so the agent can keep iterating while the page stays open:
 
@@ -69,7 +78,7 @@ Run this in a long-lived exec session (`exec_command` with `is_background: true`
 
 The command **blocks until the user clicks the Close button on the page**, then exits 0 with a single line like `Template preview closed [via loopback]`. If the user instead just closes the browser tab without clicking Close, the process keeps running until the 30-minute timeout. The page auto-redirects to the most recent trace for the function and renders it with the org's current templates; the user refreshes after each edit to see the new render.
 
-## 5. Edit loop: change → render → confirm (poll for Close)
+## 6. Edit loop: change → render → confirm (poll for Close)
 
 Each round of the loop:
 
@@ -79,7 +88,7 @@ Each round of the loop:
 4. Call `mcp__Bitfab__update_template` with the full edited body. The tool upserts the org's global override in place (no version bump, no row juggling).
 5. Tell the user "Refresh the preview to see the change," in one short line. Do not paste the template body back into chat.
 
-Before asking the user about another change, **check whether the background process from step 4 has exited**. The terminal signal is a line containing `Template preview closed` on stdout (the process exits 0 right after).
+Before asking the user about another change, **check whether the background process from step 5 has exited**. The terminal signal is a line containing `Template preview closed` on stdout (the process exits 0 right after).
 
 Use `read` against the captured exec session; the `Template preview closed` line on stdout means the user clicked Close and the session has exited.
 
