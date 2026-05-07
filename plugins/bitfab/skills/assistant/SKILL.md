@@ -182,7 +182,11 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - **`event: modify`** — user clicked Edit with agent — go to the modify loop, then come back here to read the next event
    - **`event: saved`** — user clicked Done — dataset is finalised, move on to confirm + summarise
    - **`event: cancelled` or process exits non-zero** — stop the flow
-9. **Modify loop: add or remove traces in chat** — The page is still open and the background script is still alive; the user wants you to add or remove traces. Ask the user **what** they want to add or remove. They might describe by criteria ("drop empty-output traces", "add 5 more from last week with errors") or paste explicit trace IDs.
+9. **Modify loop: add or remove traces in chat** — The page is still open and the background script is still alive; the user wants you to add or remove traces. Ask in plain chat:
+
+   > What would you like to add or remove? You can describe by criteria (e.g. "drop empty-output traces", "add 5 more from last week with errors") or paste explicit trace IDs.
+
+   Then wait for the user's next message. It will contain their answer. Do NOT ask the user here (the answer is free-form and options would just add an extra step before the user can type).
 
    Then act on it:
 
