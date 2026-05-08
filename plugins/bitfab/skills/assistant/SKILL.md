@@ -1,6 +1,6 @@
 ---
 name: assistant
-description: "Iterate on a traced Bitfab function to improve its pass rate. Use when the user wants to review failing traces, label examples, and replay an LLM function until it passes. Invoke with $bitfab:assistant [all|dataset|experiment] [<trace-function-key>] [<dataset-id>]."
+description: "Fix and experiment on code, or ask for guidance"
 ---
 
 # Bitfab Assistant

@@ -1,6 +1,6 @@
 ---
 name: setup
-description: "Set up Bitfab tracing — authenticate, instrument, modify, and create replay scripts. Invoke with $bitfab:setup [all|login|login headless|instrument|modify|replay|templates]."
+description: "Set up and update the loop to improve AI features autonomously. Invoke with $bitfab:setup [<mode>] [<what to do>]."
 ---
 
 # Bitfab Setup
@@ -18,7 +18,7 @@ description: "Set up Bitfab tracing — authenticate, instrument, modify, and cr
 - Stop polling only when: (a) the process exits 0 with its completion summary, (b) the process exits non-zero, or (c) the user explicitly cancels.
 - When the process exits, immediately continue with the next step — don't wait for another user message.
 
-This skill has five phases: **login**, **instrument**, **modify**, **replay**, and **templates**. Run individually or all at once (`all` runs login → instrument → replay; `modify` is only invoked explicitly or as a branch from the Instrument step 2 menu; `templates` is only invoked explicitly).
+This skill has six phases: **login**, **instrument**, **modify**, **view**, **replay**, and **templates**. Run individually or all at once (`all` runs login → instrument → replay; `modify` is only invoked explicitly or as a branch from the Instrument step 2 menu; `view` is only invoked explicitly; `templates` is only invoked explicitly).
 
 Within an Instrument cycle, **instrumentation and the replay pipeline for the cycle's trace function are written in the same batch of tool calls** once the trace plan is confirmed (see step 11). The Replay phase in `all` mode is therefore a coverage-verification/backfill sweep — it typically finds every key already wired up.
 
@@ -52,6 +52,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 | `$bitfab:setup login headless` | Authenticate by pasting a token (no browser callback needed) |
 | `$bitfab:setup instrument` | Instrument AI workflows with Bitfab tracing |
 | `$bitfab:setup modify` | Modify an existing trace setup (add context, change depth, or move the root) |
+| `$bitfab:setup view` | Open the trace planner UI for an existing trace function (read-only) |
 | `$bitfab:setup replay` | Create or update replay scripts for instrumented workflows |
 | `$bitfab:setup templates [<key>]` | Iterate on the span-rendering templates for one trace function |
 
@@ -351,6 +352,32 @@ Every Modify cycle targets **exactly one** trace function. Never batch multiple 
    > C) **Done** — stop here
 
    B returns to step 2. A and C exit the Modify loop. After exit, stop (Modify does not auto-continue to Replay — the user can invoke `$bitfab:setup replay` separately).
+
+## View
+
+**Run only when mode is `view`.**
+
+Open the trace planner UI for an **existing** trace function — read-only. Triggered explicitly by `$bitfab:setup view`. Useful for inspecting what's currently captured (tree shape, captured node ids, sample inputs/outputs) without making any code edits.
+
+Every View invocation targets **exactly one** trace function. The browser UI's Confirm/Cancel controls have no effect here — the user is just looking at the plan.
+
+1. **Gather existing trace functions** by searching for SDK patterns (`getFunction("key")`, `get_function("key")`, `bitfab_function "key"`, `WithFunctionName("key")`). List each key alongside its root function. If none are found, tell the user View needs existing instrumentation and suggest `$bitfab:setup instrument`.
+2. **Pick exactly ONE trace function to view.** Ask the user with the list of existing keys. Recommend the one the user most recently instrumented (or the one most recently referenced in the current session) and explain why in one line.
+3. Call `mcp__Bitfab__get_trace_plan` with `{ traceFunctionKey: "<chosen key>" }` (no `planId`). Two outcomes:
+
+   - **Prior plan found** — parse the response for the `Plan id:` line and hold that id for the next step. Take branch **A** (Open).
+   - **"No prior confirmed trace plan found"** — there is no plan to view (key created outside the skill, never confirmed, or never instrumented via this skill). Tell the user there's nothing to view yet and suggest `$bitfab:setup modify` to build and confirm a plan for this key. Take branch **B** (Stop).
+4. Open the trace plan in the browser by running:
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openTracePlan.js" <planId>
+   ```
+
+   (`${BITFAB_PLUGIN_DIR}` resolves to the plugin directory; `<planId>` is the id parsed from step 3.) The script opens the trace plan page and **blocks** until the user closes the browser tab or clicks Confirm/Cancel (up to 30 minutes). View is read-only — whichever button the user clicks, do **not** apply edits or call `mcp__Bitfab__get_trace_plan` again. When the process exits, report that the plan was viewed and stop.
+
+   The script prints a handoff URL (with `callbackPort=` and `ticket=` query params) — surface it to the user verbatim so they can paste it into a browser if the auto-launch didn't open one.
+
+   **Polling (mandatory — see the Blocking-process rule at the top of this skill):** after surfacing the URL, keep polling the live exec session until the process exits. Do NOT stop after printing the URL. Do NOT wait for a chat message from the user — their dismissal arrives as stdout on the already-running process, not as a new prompt.
 
 ## Replay
 
