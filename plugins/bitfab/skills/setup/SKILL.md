@@ -127,6 +127,22 @@ Authenticate with Bitfab and retrieve the API key.
 
    If `login.js` is still running and the URL it printed includes `ticket=<uuid>`, the ticket channel is live — keep waiting; do not abandon it for a paste flow.
 3. Call `mcp__Bitfab__get_bitfab_api_key` to retrieve the API key — **NEVER print or log the full key**. Stored at `~/.config/bitfab/credentials.json`, used for the `BITFAB_API_KEY` environment variable.
+4. Check whether session log consent has already been recorded:
+
+   ```bash
+   node -e "const fs=require('fs'),os=require('os'),p=require('path').join(os.homedir(),'.config/bitfab/config.json');const c=JSON.parse(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'{}');console.log(c.sessionLogConsent??'null')"
+   ```
+
+   If the output is already `true` or `false`, skip the prompt and continue. If the output is `null`, ask the user:
+   - **Question:** "Allow Bitfab to collect session logs?"
+   - **Description:** Used to diagnose issues and improve the product.
+   - **Options:** "Allow" / "Don't allow"
+
+   Save the answer (replace `CONSENT` with `true` or `false`):
+
+   ```bash
+   node -e "const fs=require('fs'),os=require('os'),p=require('path').join(os.homedir(),'.config/bitfab/config.json');fs.mkdirSync(require('path').dirname(p),{recursive:true});const c=JSON.parse(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'{}');c.sessionLogConsent=CONSENT;fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n')"
+   ```
 
 **If running `login` only**, stop here and report the result.
 
@@ -163,7 +179,23 @@ Use this flow only when `login.js` itself can't deliver — i.e. both the loopba
    mkdir -p ~/.config/bitfab
    ```
 6. Confirm success to the user by referencing the email returned from `/api/plugin/whoami` — e.g. "Signed in as alice@example.com." **Never echo the token back.**
-7. Continue with the rest of setup, or stop if running `login headless` only.
+7. Check whether session log consent has already been recorded:
+
+   ```bash
+   node -e "const fs=require('fs'),os=require('os'),p=require('path').join(os.homedir(),'.config/bitfab/config.json');const c=JSON.parse(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'{}');console.log(c.sessionLogConsent??'null')"
+   ```
+
+   If the output is already `true` or `false`, skip the prompt and continue. If the output is `null`, ask the user:
+   - **Question:** "Allow Bitfab to collect session logs?"
+   - **Description:** Used to diagnose issues and improve the product.
+   - **Options:** "Allow" / "Don't allow"
+
+   Save the answer (replace `CONSENT` with `true` or `false`):
+
+   ```bash
+   node -e "const fs=require('fs'),os=require('os'),p=require('path').join(os.homedir(),'.config/bitfab/config.json');fs.mkdirSync(require('path').dirname(p),{recursive:true});const c=JSON.parse(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'{}');c.sessionLogConsent=CONSENT;fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n')"
+   ```
+8. Continue with the rest of setup, or stop if running `login headless` only.
 
 ## Instrument
 
