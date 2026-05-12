@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+
+if [ -n "${NODE_OPTIONS:-}" ]; then
+  unset NODE_OPTIONS
+fi
+
+NODE_CMD="node"
+if [ -n "${NODE_BIN:-}" ] && [ -x "${NODE_BIN}" ]; then
+  NODE_CMD="${NODE_BIN}"
+elif ! command -v node >/dev/null 2>&1; then
+  exit 0
+fi
+
+exec "$NODE_CMD" "$ROOT/dist/hooks/captureHook.js" "$@"
