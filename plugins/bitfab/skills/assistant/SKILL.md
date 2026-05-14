@@ -419,7 +419,7 @@ Run an iterative improvement loop. Each iteration:
 
    The command opens a browser window and exits immediately.
 
-   Continue straight to `share-results`. The viewer is a parallel review surface for the human; your textual summary in the next step is still required.
+   The user reviews the viewer alongside your `share-results` summary before deciding whether to iterate.
 7. **Run only when mode is `all` or `experiment`.**
 
    **Share results to the user.**
