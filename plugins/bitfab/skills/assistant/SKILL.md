@@ -408,6 +408,17 @@ Run an iterative improvement loop. Each iteration:
    - **fail**-labeled: does the new output address the annotation? Use it as acceptance criteria.
    - **pass**-labeled: preserved or regressed?
    - Spill to a tmp file if context gets big. Keep the `unreplayable` list (trace ID + error string) alongside pass/fail for `share-results`.
+
+   **After evaluating, label the replayed traces.** The experiment viewer derives its verdicts from trace labels, not `traces.success`. You must write labels for the replayed traces so the viewer shows meaningful results.
+
+   1. Call `mcp__Bitfab__read_traces` with `scope: "full"` on the replayed trace IDs (the ones from the new test run, not the originals) to read their outputs.
+   2. For each replayed trace, compare its output against the original trace's label and annotation. Determine whether the replay passes or fails the same criteria.
+   3. Call `mcp__Bitfab__update_agent_labels` once with an array of `{ traceId, label, annotation }` for every replayed trace:
+      - `label: true` if the replay addresses the original annotation (for fail-labeled originals) or preserves correct behavior (for pass-labeled originals)
+      - `label: false` if the replay still exhibits the original failure or introduced a regression
+      - `annotation`: one sentence explaining why, referencing the original annotation as acceptance criteria
+
+   The labels you write here are unapproved agent labels. The experiment viewer includes them in its verdicts so the user sees immediate results. The user can review and override in the dataset page.
 7. **Run only when mode is `all` or `experiment`.**
 
    **Open experiment viewer.** If no `testRunId`s were captured (e.g. the replay script didn't print them), skip this step and continue, but flag it to the user in `share-results` so the script can be fixed before the next iteration.
