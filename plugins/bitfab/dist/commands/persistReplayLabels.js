@@ -1,0 +1,7 @@
+import { runPersistReplayLabels } from "bitfab-plugin-lib";
+import { platform } from "../platform.js";
+import { getVersion } from "../version.js";
+runPersistReplayLabels(platform, getVersion()).catch((err) => {
+    console.error("Persist replay labels failed:", err.message);
+    process.exit(1);
+});

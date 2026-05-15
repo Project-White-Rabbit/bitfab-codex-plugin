@@ -166,9 +166,34 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
    - **no datasets exist for this function (list_datasets returned empty)** — **don't ask** — silently call `mcp__Bitfab__create_dataset` with `traceFunctionKey: <key>` and `name: <key>` (just the trace function key as the name; the user can rename it later in the UI if they want). Hold the returned `datasetId` and continue. The first-time user shouldn't have to answer a name prompt before they've even seen the dataset.
    - **one or more datasets already exist** — present them to the user as a numbered choice, with one option per existing dataset (name · id · current trace count) plus a "Create new" option. Recommend the most recently used dataset that has traces. If the user picks an existing dataset, hold its id and continue. If the user picks "Create new", silently call `mcp__Bitfab__create_dataset` with `name: "<key> #N"` where N is one more than the number of existing datasets (e.g. `eval-assistant #2`) — don't ask for a name. Hold the new id and continue.
-2. **Ask what kinds of traces to find** — Before searching, find out what the user is actually trying to surface. The trace function may have thousands of traces; "what should I label?" is the question that makes the rest of this phase useful.
+2. **Ask how to source candidate traces.** Before searching, decide *where* the candidate traces come from. Three real options:
 
-   **Skip this question** if the chosen dataset already has labeled traces — those labels + annotations are the prior context, and you should mirror that intent when finding more candidates. Only ask when there is no prior context: the dataset was just created (either silently, because none existed, or because the user picked "Create new"), or the picked dataset is empty.
+   1. **Define new criteria** — agent searches unlabeled traces shaped by what the user wants to surface. Best when the user has a hypothesis or a specific failure pattern in mind.
+   2. **Reuse existing labels for this function** — pull traces that already have a validated human or approved-agent label (from any prior dataset on this function) and seed the new dataset with them. Best when the user wants to hill-climb off prior labeling work — same labels, different cut, add more later.
+   3. **Open / you decide** — agent samples broadly with no hypothesis, ignoring prior labels for the search shape. Best for discovery passes.
+
+   **Probe for prior label volume first** so the recommendation is grounded. Call `mcp__Bitfab__search_traces` with `traceFunctionKey: <key>`, `validated: true`, `limit: 50` to see roughly how many validated labels already exist for this function. Note the count — you'll need it for the recommendation and for option 2.
+
+   Then ask the user with the three options below. Recommend:
+   - Option **2 (Reuse)** if the function has 5+ validated labels AND the picked dataset is freshly created or empty (the user is starting a new cut and prior work is the right baseline)
+   - Option **1 (Define)** if the user has a hypothesis or the function has < 5 validated labels (not enough prior signal to reuse)
+   - Option **3 (Open)** if the user explicitly says they don't have a hypothesis yet and there's not much prior labeling
+
+   Hold the chosen mode in working context — the next steps branch on it.
+
+   > A) **Define new criteria** — tell me what to find (failure pattern, customer reports, etc.) and I search unlabeled traces
+   > B) **Reuse existing labels for this function** — seed the dataset with traces that already have validated labels, then optionally add more *(recommended)*
+   > C) **Open — you decide** — broad sample with no hypothesis; ignore prior labels for the search shape
+3. **Seed dataset from existing validated labels.** Reachable only when the user picked Option B in `ask-search-mode`. Pull traces that already have a validated label (human-authored, or agent-authored and human-approved) for this function, attach them to the picked dataset, and route on whether the user also wants to add more.
+
+   1. Call `mcp__Bitfab__search_traces` with `traceFunctionKey: <key>`, `validated: true`, and a generous `limit` (50 is the cap). Both `labelResult: true` and `labelResult: false` matter — failures are the hill-climbing signal, but passes anchor the regression boundary. If 50 isn't enough to cover the function's labeled history, run a second call with `labelResult: false` only to bias toward fails first, then a third with `labelResult: true`. De-dupe trace IDs across calls.
+   2. Call `mcp__Bitfab__read_traces` with `scope: "summary"` on the resulting trace IDs so the labels + annotations are in working context. Don't re-label them — these are already validated.
+   3. Call `mcp__Bitfab__add_traces_to_dataset` once with `datasetId` (the one picked in `list-datasets`) and the full deduped trace ID array. The call is idempotent, so re-attaching IDs already in the dataset is a safe no-op.
+   4. Briefly summarize for the user: "Seeded the dataset with N reused labels (M fails, K passes). Want me to find more candidates to label, or is this set enough to move on?"
+
+   > A) **Find more candidates to label** — go through the regular intent + search + label flow on top of the reused set
+   > B) **Move on with just the reused set** — skip further labeling; go straight to dataset review *(recommended)*
+4. **Ask what kinds of traces to find** — The user picked "Define new criteria" (or arrived here from the reuse path wanting more). Find out what they're actually trying to surface. The trace function may have thousands of traces; "what should I label?" is the question that makes the rest of this phase useful.
 
    When asking, ask the user with these options (and a free-text fallback so the user can describe something specific):
 
@@ -177,22 +202,22 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - **C — Open-ended, you decide** — no hypothesis yet; you sample broadly across recent traces, look for diversity, and surface anything that looks like a candidate failure or interesting edge case
 
    Hold the user's answer (the chosen option **and** any free-text detail) in working context — the next step uses it to shape the `mcp__Bitfab__search_traces` filters and which traces to prioritise reading. If they pick C, default to recent + diverse + non-empty outputs.
-3. **Find unlabeled traces** — Search without label filters to find unlabeled traces for the trace function. **Shape the search by the intent captured in the previous step** (or by the prior dataset's existing labels, if any): Option A = filter to traces matching the user's described failure pattern; Option B = filter by the user, session, or time window of the reported incidents; Option C = default sweep (recent, diverse inputs, non-empty outputs). Use `mcp__Bitfab__search_traces` with the relevant filters, then `mcp__Bitfab__read_traces` with `scope: "summary"` to read candidates and identify which are worth labeling — look for diverse inputs, traces that produced output (not empty), and traces that cover different scenarios under the chosen intent. Filter out near-duplicates and uninteresting traces. If every trace is already labeled and attached to this dataset, you can move straight on with no new candidates.
-4. **Ask how the user wants to label** — Before any verdicts go on these candidate traces, ask the user how the user wants to label them. There are exactly two modes, and the answer determines whether you call `mcp__Bitfab__update_agent_labels` at all:
+5. **Find unlabeled traces** — Search without label filters to find unlabeled traces for the trace function. **Shape the search by the intent captured in the previous step** (or by the prior dataset's existing labels, if any): Option A = filter to traces matching the user's described failure pattern; Option B = filter by the user, session, or time window of the reported incidents; Option C = default sweep (recent, diverse inputs, non-empty outputs). Use `mcp__Bitfab__search_traces` with the relevant filters, then `mcp__Bitfab__read_traces` with `scope: "summary"` to read candidates and identify which are worth labeling — look for diverse inputs, traces that produced output (not empty), and traces that cover different scenarios under the chosen intent. Filter out near-duplicates and uninteresting traces. If every trace is already labeled and attached to this dataset, you can move straight on with no new candidates.
+6. **Ask how the user wants to label** — Before any verdicts go on these candidate traces, ask the user how the user wants to label them. There are exactly two modes, and the answer determines whether you call `mcp__Bitfab__update_agent_labels` at all:
 
    > A) **Agent labels first, I approve / edit** — agent makes a first pass; you approve or edit each verdict in the labeling page *(recommended)*
    > B) **I'll label them manually** — no agent verdicts; you label every trace from scratch in the labeling page
 
    Recommend Option A — an agent first pass turns the labeling page into a quick approve/edit review. But respect the user's choice: if they pick B, do **not** call `mcp__Bitfab__update_agent_labels` for any of these candidates. They want to label from scratch in the labeling page, with no agent verdicts pre-filled. If no new candidate traces were found in the previous step, skip this question and continue.
-5. **Agent first pass: label them yourself before opening the labeling page** — Reachable only when the user picked Option A in the previous step. **You** label the approved candidate traces so the labeling page becomes an approve/edit review instead of a blank labeling session. Call `mcp__Bitfab__read_traces` with `scope: "full"` on the approved trace IDs (batch them — up to 10 per call), read each trace's inputs / output / spans yourself, and decide for each one whether it looks like a PASS or a FAIL. **Ground your judgment in the codebase, not just the trace text.** Before you start labeling, read the instrumented function in the user's source (located in Phase 2 in `all` mode, or via the grep step in this phase's intro in `dataset` mode) and any nearby code that explains intent — comments, docstrings, README sections, related tests, BAML files — so you know what the function is *supposed* to do and what "good" looks like for it. Apply the same context to every trace: does this output achieve the function's goal as expressed in the code? Does it match the patterns in the already-validated traces? Then call `mcp__Bitfab__update_agent_labels` once with an array of `{ traceId, label, annotation }` objects — **both `label` (true for pass, false for fail) and `annotation` (a one-or-two-sentence explanation written for the human reviewer, ideally referencing what the code is trying to do) are required for every trace**. Commit to a verdict — if you genuinely cannot decide, you didn't read the trace or the code carefully enough. The labels you save here start unapproved; they only become part of the validated dataset once a human approves them in the labeling page.
+7. **Agent first pass: label them yourself before opening the labeling page** — Reachable only when the user picked Option A in the previous step. **You** label the approved candidate traces so the labeling page becomes an approve/edit review instead of a blank labeling session. Call `mcp__Bitfab__read_traces` with `scope: "full"` on the approved trace IDs (batch them — up to 10 per call), read each trace's inputs / output / spans yourself, and decide for each one whether it looks like a PASS or a FAIL. **Ground your judgment in the codebase, not just the trace text.** Before you start labeling, read the instrumented function in the user's source (located in Phase 2 in `all` mode, or via the grep step in this phase's intro in `dataset` mode) and any nearby code that explains intent — comments, docstrings, README sections, related tests, BAML files — so you know what the function is *supposed* to do and what "good" looks like for it. Apply the same context to every trace: does this output achieve the function's goal as expressed in the code? Does it match the patterns in the already-validated traces? Then call `mcp__Bitfab__update_agent_labels` once with an array of `{ traceId, label, annotation }` objects — **both `label` (true for pass, false for fail) and `annotation` (a one-or-two-sentence explanation written for the human reviewer, ideally referencing what the code is trying to do) are required for every trace**. Commit to a verdict — if you genuinely cannot decide, you didn't read the trace or the code carefully enough. The labels you save here start unapproved; they only become part of the validated dataset once a human approves them in the labeling page.
 
    > 🚨 **HARD RULE — DO NOT SKIP (agent-first mode only):** When the user picked Option A, you MUST call `mcp__Bitfab__update_agent_labels` with verdicts for every approved trace BEFORE running `startDataset.js` to open the labeling page. Sending the user into an agent-first review with no pre-labeled verdicts is a process violation. (In manual mode this step is unreachable, and the rule does not apply.)
 
    > **Made a mistake?** If you realize a verdict was wrong (e.g., you mislabeled a trace or want to re-evaluate), call `mcp__Bitfab__update_agent_labels` again with `{ traceId, archive: true }` for those traces. The previous label is hidden (kept for audit), and you can re-label the trace from scratch with another `update_agent_labels` call.
-6. **Attach candidate traces to the dataset** — Call `mcp__Bitfab__add_traces_to_dataset` with the `datasetId` chosen earlier and the array of approved candidate trace IDs (in agent-first mode, the ones you just labeled; in manual mode, the candidates the user approved in find-unlabeled). The call is idempotent — re-adding traces already in the dataset is a no-op, so it's safe to include the full set. If no new candidate traces were approved (the dataset was already populated), skip this step.
+8. **Attach candidate traces to the dataset** — Call `mcp__Bitfab__add_traces_to_dataset` with the `datasetId` chosen earlier and the array of approved candidate trace IDs (in agent-first mode, the ones you just labeled; in manual mode, the candidates the user approved in find-unlabeled). The call is idempotent — re-adding traces already in the dataset is a no-op, so it's safe to include the full set. If no new candidate traces were approved (the dataset was already populated), skip this step.
 
    > 🚨 **HARD RULE — DO NOT SKIP:** All approved candidate trace IDs MUST be attached to the dataset before opening the page. The page reviews the dataset's contents, not the trace function's label table. An empty dataset means an empty review.
-7. Open the dataset review page for the user. The mechanism depends on whether Studio mode is active.
+9. Open the dataset review page for the user. The mechanism depends on whether Studio mode is active.
 
    **Studio mode (`studioMode = true`):** Use `navigateStudio.js` to route the already-open Studio to the dataset review page using the `sessionId` captured in the `studio/open` step:
 
@@ -215,7 +240,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    The script outputs JSON lines on stdout as events occur, and blocks until the user clicks Done (or cancels). Keep the process alive and read its output in the next step.
 
    After opening, tell the user you've opened the dataset page and are waiting for them to finish reviewing. Then proceed to `await-event`.
-8. **Wait for user to finish dataset review.** Read events from the background process. The event source depends on which mode is active.
+10. **Wait for user to finish dataset review.** Read events from the background process. The event source depends on which mode is active.
 
    **Studio mode (`studioMode = true`):** Use the **Monitor tool** to watch for the next JSON event from the Studio background process (`openStudio.js`, started in `studio/open`). The output file path was returned when you started the background process. Set up a monitor that tails only NEW lines (skip lines already read) and filters for JSON event lines:
 
@@ -242,7 +267,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - **`event: edit-with-agent` (Studio) or `event: modify` (non-Studio)** — user clicked Edit with agent on the dataset page. Go to the modify loop, then come back here to read the next event
    - **`event: return-to-agent` (Studio) or `event: saved` (non-Studio)** — user clicked Done on the dataset page. Dataset review is complete, move on to build + confirm the dataset
    - **`event: session-ended` (Studio) or `event: cancelled` (non-Studio)** — user closed Studio or cancelled. Stop the flow
-9. **Modify loop: add or remove traces in chat** — The dataset page is still open in Studio and the user wants you to add or remove traces. Ask in plain chat:
+11. **Modify loop: add or remove traces in chat** — The dataset page is still open in Studio and the user wants you to add or remove traces. Ask in plain chat:
 
    > What would you like to add or remove? You can describe by criteria (e.g. "drop empty-output traces", "add 5 more from last week with errors") or paste explicit trace IDs.
 
@@ -250,18 +275,18 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
    Then act on it:
 
-   - **Adding traces:** find candidates with `mcp__Bitfab__search_traces` / `mcp__Bitfab__read_traces`, then respect the labeling mode the user chose earlier in this phase (the ask-labeling-mode step). In **agent-first mode (Option A)**, label them yourself with `mcp__Bitfab__update_agent_labels` (same rigor as label-self: every trace gets a verdict + annotation, grounded in the code) before attaching. In **manual mode (Option B)**, do NOT call `mcp__Bitfab__update_agent_labels`. Either way, call `mcp__Bitfab__add_traces_to_dataset` to attach.
+   - **Adding traces:** find candidates with `mcp__Bitfab__search_traces` / `mcp__Bitfab__read_traces`, then respect the labeling mode the user chose earlier in this phase (the ask-labeling-mode step). In **agent-first mode (Option A)**, label them yourself with `mcp__Bitfab__update_agent_labels` (same rigor as label-self: every trace gets a verdict + annotation, grounded in the code) before attaching. In **manual mode (Option B)**, do NOT call `mcp__Bitfab__update_agent_labels`. **If no labeling mode was selected** (the user took the Reuse → Move-on path that bypasses ask-labeling-mode, or find-unlabeled returned no candidates so ask-labeling-mode self-skipped), default to **agent-first mode (Option A)** — match the recommended default and label new candidates yourself before attaching. Either way, call `mcp__Bitfab__add_traces_to_dataset` to attach.
    - **Removing traces:** call `mcp__Bitfab__remove_traces_from_dataset` with the trace IDs to remove. The traces themselves aren't deleted, only their membership in the dataset.
 
    The dataset page reflects each add/remove live (SSE), so the user sees changes flow in as you make them. When you're done, summarize what changed in chat and **return to the await-event step to read the next event**. The user can click Edit with agent again for another modify round, or Done to finalize.
-10. **Build the dataset** — You already know the trace IDs in this dataset (you attached them in earlier steps and tracked any add/remove from modify rounds). Call `mcp__Bitfab__read_traces` with all of them and `scope: "full"` to load the labels + annotations into context. This is the working set for confirm + every Phase 5 experiment.
-11. **Confirm the dataset** — Present the dataset as a numbered choice: each entry showing (trace ID, label, annotation summary). The dataset must contain at least one **validated failing label** — i.e. at least one trace where a human either authored or approved a `false` label. To check, call `mcp__Bitfab__search_traces` restricted to the dataset trace IDs with `validated: true` and `labelResult: false`. Two outcomes:
+12. **Build the dataset** — You already know the trace IDs in this dataset (you attached them in earlier steps and tracked any add/remove from modify rounds). Call `mcp__Bitfab__read_traces` with all of them and `scope: "full"` to load the labels + annotations into context. This is the working set for confirm + every Phase 5 experiment.
+13. **Confirm the dataset** — Present the dataset as a numbered choice: each entry showing (trace ID, label, annotation summary). The dataset must contain at least one **validated failing label** — i.e. at least one trace where a human either authored or approved a `false` label. To check, call `mcp__Bitfab__search_traces` restricted to the dataset trace IDs with `validated: true` and `labelResult: false`. Two outcomes:
 
    - **gate fails (no validated failing label — search returns nothing)** — tell the user and loop back to find or label more unlabeled traces
    - **gate passes (at least one validated failing label)** — get explicit approval, then continue
 
    Unapproved agent labels do **not** satisfy this gate by design — `validated: true` excludes them.
-12. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep both the `datasetId` and the trace IDs in your working context throughout. In `dataset` mode, stop here: if `studioMode` is true, kill the Studio background process (send SIGINT or abort the background task). Surface the dataset summary (including the id) and exit so they can pick up later with `$bitfab:assistant experiment <key> <datasetId>`.
+14. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep both the `datasetId` and the trace IDs in your working context throughout. In `dataset` mode, stop here: if `studioMode` is true, kill the Studio background process (send SIGINT or abort the background task). Surface the dataset summary (including the id) and exit so they can pick up later with `$bitfab:assistant experiment <key> <datasetId>`.
 
 ## Phase 4: Diagnose & Plan
 
@@ -403,23 +428,51 @@ Run an iterative improvement loop. Each iteration:
 
    **Evaluate against labels & annotations.** Score only items where `item.error` is unset. Items with `item.error` set are unreplayable (already classified) and go in their own bucket — never pass, fail, or regression.
 
-   For each remaining trace, use the label and annotation (from Phase 3, or rehydrated in `experiment` mode) to judge improvement:
+   For each completed (non-errored) replay item, derive a verdict by comparing the replay's new output against the original trace's label and annotation (from Phase 3, or rehydrated in `experiment` mode):
 
-   - **fail**-labeled: does the new output address the annotation? Use it as acceptance criteria.
-   - **pass**-labeled: preserved or regressed?
-   - Spill to a tmp file if context gets big. Keep the `unreplayable` list (trace ID + error string) alongside pass/fail for `share-results`.
+   - **fail**-labeled original: does the replay's new output address the annotation? If yes → `label: true` (PASS). If no → `label: false` (FAIL). Use the annotation as the acceptance criterion.
+   - **pass**-labeled original: preserved → `label: true` (PASS). regressed → `label: false` (FAIL).
+   - Cannot judge from the output alone (genuinely ambiguous, not laziness): `skip: true` instead of guessing. Skips are recorded explicitly so the verify step knows you intentionally did not verdict.
+   - Unreplayable items (`item.error` set) are NOT verdicted here — keep their list (trace ID + error string) for `share-results`.
 
-   **After evaluating, label the replayed traces.** The experiment viewer derives its verdicts from trace labels, not `traces.success`. You must write labels for the replayed traces so the viewer shows meaningful results.
+   **The verdict you produce here is persisted onto the REPLAY trace IDs (not the originals).** That's what makes "did this fix actually pass on replay?" queryable across iterations.
 
-   1. Call `mcp__Bitfab__read_traces` with `scope: "full"` on the replayed trace IDs (the ones from the new test run, not the originals) to read their outputs.
-   2. For each replayed trace, compare its output against the original trace's label and annotation. Determine whether the replay passes or fails the same criteria.
-   3. Call `mcp__Bitfab__update_agent_labels` once with an array of `{ traceId, label, annotation }` for every replayed trace:
-      - `label: true` if the replay addresses the original annotation (for fail-labeled originals) or preserves correct behavior (for pass-labeled originals)
-      - `label: false` if the replay still exhibits the original failure or introduced a regression
-      - `annotation`: one sentence explaining why, referencing the original annotation as acceptance criteria
+   **Persist via `persistReplayLabels.js`.** Write the verdicts to a tmp JSON file then run the script — one Bash call, one batched MCP call server-side, file is auto-deleted on success:
 
-   The labels you write here are unapproved agent labels. The experiment viewer includes them in its verdicts so the user sees immediate results. The user can review and override in the dataset page.
+   1. Pick a tmp path. Recommended: `.bitfab/tmp/verdicts-<testRunId>.json` (create the dir if missing). Falls back to `os.tmpdir()` if the project root isn't writable.
+   2. Use the `Write` tool to write JSON of this exact shape:
+
+   ```json
+   {
+     "expectedTraceIds": ["<replayTraceId1>", "<replayTraceId2>", "..."],
+     "verdicts": [
+       { "traceId": "<replayTraceId1>", "label": true, "annotation": "Now returns the missing field; original annotation said it was empty.", "confidence": "High" },
+       { "traceId": "<replayTraceId2>", "label": false, "annotation": "Output still hallucinates a tool argument.", "confidence": "VeryHigh" },
+       { "traceId": "<replayTraceId3>", "skip": true }
+     ]
+   }
+   ```
+
+   `expectedTraceIds` MUST be the full set of REPLAY trace IDs you committed to verdict (every completed item from the run). `verdicts` MUST have one entry per ID — either a `{label, annotation, confidence?}` verdict or a `{skip: true}` explicit skip. `confidence` is optional but recommended (`VeryLow|Low|Medium|High|VeryHigh`); it surfaces in the labeling UI so reviewers can prioritize low-confidence verdicts. If verdict counts don't match `expectedTraceIds`, the script returns `status: "missing-coverage"` and the verify step routes you back to fill the gaps.
+
+   3. Run the script:
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/persistReplayLabels.js" .bitfab/tmp/verdicts-<testRunId>.json
+   ```
+
+   4. Read its single JSON line on stdout. Hold the parsed result for the next step.
+
+   **Spill working notes to a separate tmp file if context gets big.** Don't conflate working notes with the verdicts file — the script deletes the verdicts file on success.
 7. **Run only when mode is `all` or `experiment`.**
+
+   **Verify replay labels persisted.** Route on the `status` field of the JSON the script printed in `evaluate-results`. The script is the deterministic gate — if it didn't return `ok`, the agent's verdicts are NOT yet on the replay traces and the experiment delta will be wrong on the next iteration.
+
+   - **`status: "ok"` (every replay trace has a verdict or explicit skip persisted)** — labels are persisted on the replay traces and the verdicts file is gone. Continue to open-experiments
+   - **`status: "missing-coverage"` (script returned a non-empty `missingTraceIds` array)** — you under-verdicted. Read the missing replay trace IDs (use `mcp__Bitfab__read_traces` with `scope: "summary"` or `"full"` if you didn't already), decide each one (PASS / FAIL with annotation, or `skip: true` if genuinely ambiguous), write a NEW verdicts file at the same path covering ALL the originally expected IDs (the script needs the full `expectedTraceIds` list each call, not just the gaps), and re-run the script. Loop back here with the new result
+   - **`status: "invalid-input"` (malformed verdicts JSON or missing fields)** — the verdicts file you wrote doesn't match the schema. Read the script's `message` field, fix the JSON (most common: missing annotation on a non-skip entry, missing traceId, expectedTraceIds empty), and re-run the script. Loop back here
+   - **`status: "mcp-error"` (MCP call to update_agent_labels failed mid-batch)** — network or auth error. The script's `partialTraceIds` lists which IDs were already persisted. Tell the user, recommend re-running the script (it's idempotent — already-persisted labels just upsert), and loop back here. If it keeps failing, stop and surface the error
+8. **Run only when mode is `all` or `experiment`.**
 
    **Open experiment viewer.** If no `testRunId`s were captured (e.g. the replay script didn't print them), skip this step and continue, but flag it to the user in `share-results` so the script can be fixed before the next iteration.
 
@@ -440,7 +493,7 @@ Run an iterative improvement loop. Each iteration:
    The command opens a browser window and exits immediately.
 
    The user reviews the viewer alongside your `share-results` summary before deciding whether to iterate.
-8. **Run only when mode is `all` or `experiment`.**
+9. **Run only when mode is `all` or `experiment`.**
 
    **Share results to the user.**
 
