@@ -18,7 +18,7 @@ description: "Set up and update the loop to improve AI features autonomously. In
 - Stop polling only when: (a) the process exits 0 with its completion summary, (b) the process exits non-zero, or (c) the user explicitly cancels.
 - When the process exits, immediately continue with the next step — don't wait for another user message.
 
-This skill has six phases: **login**, **instrument**, **modify**, **view**, **replay**, and **templates**. Run individually or all at once (`all` runs login → instrument → replay; `modify` is only invoked explicitly or as a branch from the Instrument step 2 menu; `view` is only invoked explicitly; `templates` is only invoked explicitly).
+This skill has seven phases: **login**, **session-logs**, **instrument**, **modify**, **view**, **replay**, and **templates**. Run individually or all at once (`all` runs login → instrument → replay; `session-logs` is standalone and does not require login; `modify` is only invoked explicitly or as a branch from the Instrument step 2 menu; `view` is only invoked explicitly; `templates` is only invoked explicitly).
 
 Within an Instrument cycle, **instrumentation and the replay pipeline for the cycle's trace function are written in the same batch of tool calls** once the trace plan is confirmed (see step 11). The Replay phase in `all` mode is therefore a coverage-verification/backfill sweep — it typically finds every key already wired up.
 
@@ -54,6 +54,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 | `$bitfab:setup modify` | Modify an existing trace setup (add context, change depth, or move the root) |
 | `$bitfab:setup view` | Open the trace planner UI for an existing trace function (read-only) |
 | `$bitfab:setup replay` | Create or update replay scripts for instrumented workflows |
+| `$bitfab:setup session-logs` | Opt in or out of session log collection (no login required) |
 | `$bitfab:setup templates [<key>]` | Iterate on the span-rendering templates for one trace function |
 
 ## Preamble
@@ -196,6 +197,31 @@ Use this flow only when `login.js` itself can't deliver — i.e. both the loopba
    node -e "const fs=require('fs'),os=require('os'),p=require('path').join(os.homedir(),'.config/bitfab/config.json');fs.mkdirSync(require('path').dirname(p),{recursive:true});const c=JSON.parse(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'{}');c.sessionLogConsent=CONSENT;fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n')"
    ```
 8. Continue with the rest of setup, or stop if running `login headless` only.
+
+## Session Logs
+
+**Run only when mode is `session-logs`.**
+
+Opt in or out of session log collection. Does not require authentication.
+
+1. Check whether session log consent has already been recorded:
+
+   ```bash
+   node -e "const fs=require('fs'),os=require('os'),p=require('path').join(os.homedir(),'.config/bitfab/config.json');const c=JSON.parse(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'{}');console.log(c.sessionLogConsent??'null')"
+   ```
+
+   If the output is `true`, tell the user session logs are currently **enabled**. If `false`, tell the user session logs are currently **disabled**. Then ask the user:
+   - **Question:** "Allow Bitfab to collect session logs?"
+   - **Description:** Session logs help us diagnose issues and improve the product. They include prompts, responses, and tool calls from sessions where Bitfab tools are used.
+   - **Options:** "Allow" / "Don't allow"
+
+   Save the answer (replace `CONSENT` with `true` or `false`):
+
+   ```bash
+   node -e "const fs=require('fs'),os=require('os'),p=require('path').join(os.homedir(),'.config/bitfab/config.json');fs.mkdirSync(require('path').dirname(p),{recursive:true});const c=JSON.parse(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'{}');c.sessionLogConsent=CONSENT;fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n')"
+   ```
+
+   Confirm the change to the user.
 
 ## Instrument
 
