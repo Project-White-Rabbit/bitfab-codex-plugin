@@ -15,7 +15,7 @@ Use the local plugin MCP tools (`mcp__Bitfab__list_trace_functions`, `mcp__Bitfa
 - Present 2-5 concrete options
 - One decision per question — never batch
 
-This skill has three invocation modes. `all` walks every phase. The two sub-modes do one focused thing each — building a labeled dataset, or running experiments against an existing one — and require the trace function key as the argument because they skip the function picker (Phase 1) and instrumentation/replay verification (Phase 2).
+This skill has three invocation modes. `all` walks every phase. The two sub-modes do one focused thing each, building a labeled dataset, or running experiments against an existing one, and require the trace function key as the argument because they skip the function picker (Phase 1) and instrumentation/replay verification (Phase 2).
 
 | Invocation | Action |
 |---|---|
@@ -25,22 +25,10 @@ This skill has three invocation modes. `all` walks every phase. The two sub-mode
 
 In sub-modes, grep the codebase for `<key>` early so labeling and experiments are grounded in the actual instrumented function (the full flow does this in Phase 2; sub-modes skip Phase 2 entirely).
 
-## Studio mode
-
-Add `studio` to ANY invocation to open the companion browser surface that stays open for the entire flow:
-
-| Invocation | Action |
-|---|---|
-| `$bitfab:assistant studio` | Full flow with Studio |
-| `$bitfab:assistant studio dataset <key>` | Dataset mode with Studio |
-| `$bitfab:assistant studio experiment <key>` | Experiment mode with Studio |
-
-**Parse the `studio` argument early**: if the word `studio` appears anywhere in the arguments (case-insensitive), set a `studioMode = true` flag and strip it from the remaining arguments before parsing mode/key/dataset-id. Hold this flag in working context for the rest of the flow. Steps that diverge between Studio and non-Studio modes check this flag and follow the appropriate path.
-
-Without `studio`, the flow uses the legacy browser handoff (`startDataset.js`) which opens a separate browser window for dataset review and closes when the user clicks Done. This is the default.
+**Studio** is the companion browser surface for the entire assistant flow. It opens automatically at the start and stays open throughout all phases. Individual phases navigate the Studio to the relevant page (dataset review, experiment viewer, etc.).
 
 
-🚨 **Blocking-process rule (applies to any plugin command described as "blocks until the user does X"):** When you launch a plugin CLI that blocks on a browser handoff (`startDataset.js`, `login.js`, etc.), you MUST keep the exec session alive and keep polling it until the process exits on its own.
+🚨 **Blocking-process rule (applies to any plugin command described as "blocks until the user does X"):** When you launch a plugin CLI that blocks on a browser handoff (`login.js`, etc.), you MUST keep the exec session alive and keep polling it until the process exits on its own.
 
 - Printing the URL is NOT completion. The process is still running, racing a loopback callback and a server-polled ticket — it will exit only after the user's browser action delivers a result (or after the timeout).
 - After sending the URL to the user, keep polling the live shell/exec session at least every few seconds with your normal "read more output" tool (`write_stdin`, `read`, or whatever your runtime's equivalent is for the long-running shell). Do not idle waiting for a user message.
@@ -73,20 +61,20 @@ Without `studio`, the flow uses the legacy browser handoff (`startDataset.js`) w
    Watch the output and route on it:
 
    - **not authenticated** — stop the flow immediately. Tell the user to run `$bitfab:setup login` first
-   - **authenticated (with or without a `v<X> available` upgrade notice)** — continue to the Studio gateway (which opens Studio if studioMode is true, or passes through if false). If an upgrade notice appeared, pass it through to the user verbatim, but don't block on it; surface the notice once and move on
+   - **authenticated (with or without a `v<X> available` upgrade notice)** — continue to the Studio gateway. If an upgrade notice appeared, pass it through to the user verbatim, but don't block on it; surface the notice once and move on
 
 ## Studio Lifecycle
 
-**Only active when `studioMode = true`.** If `studioMode` is false, skip this phase entirely.
-
 The Studio is the companion browser surface for the entire assistant flow. It opens once at the start and stays open throughout all phases. Individual phases navigate the Studio to the relevant page (dataset review, experiment viewer, etc.) using `navigateStudio.js`. If the Studio background process outputs `{"event":"session-ended",...}` at any point, the user has closed the Studio early. This is not an error: continue the flow normally, but skip any `navigateStudio.js` calls for the rest of the session (the session is gone). Do **not** attempt to reopen the Studio.
 
-1. **If `studioMode` is false**, skip this step entirely and proceed to the next step (the mode-based routing below handles it).
+1. Start the Studio as a long-running background process. The command accepts an optional initial path argument so Studio opens directly at the relevant page:
 
-   **If `studioMode` is true**, start the Studio as a long-running background process:
+   - **`all` mode:** no path argument (opens at `/studio` root)
+   - **`dataset <key>` mode:** pass `/studio/trace-functions/<key>/datasets`
+   - **`experiment <key>` mode:** pass `/studio/trace-functions/<key>/experiments`
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudio.js"
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudio.js" [initialPath]
    ```
 
    Run it via your runtime's "long-running exec session" mechanism.
@@ -213,15 +201,13 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    Recommend Option A — an agent first pass turns the labeling page into a quick approve/edit review. But respect the user's choice: if they pick B, do **not** call `mcp__Bitfab__update_agent_labels` for any of these candidates. They want to label from scratch in the labeling page, with no agent verdicts pre-filled. If no new candidate traces were found in the previous step, skip this question and continue.
 7. **Agent first pass: label them yourself before opening the labeling page** — Reachable only when the user picked Option A in the previous step. **You** label the approved candidate traces so the labeling page becomes an approve/edit review instead of a blank labeling session. Call `mcp__Bitfab__read_traces` with `scope: "full"` on the approved trace IDs (batch them — up to 10 per call), read each trace's inputs / output / spans yourself, and decide for each one whether it looks like a PASS or a FAIL. **Ground your judgment in the codebase, not just the trace text.** Before you start labeling, read the instrumented function in the user's source (located in Phase 2 in `all` mode, or via the grep step in this phase's intro in `dataset` mode) and any nearby code that explains intent — comments, docstrings, README sections, related tests, BAML files — so you know what the function is *supposed* to do and what "good" looks like for it. Apply the same context to every trace: does this output achieve the function's goal as expressed in the code? Does it match the patterns in the already-validated traces? Then call `mcp__Bitfab__update_agent_labels` once with an array of `{ traceId, label, annotation }` objects — **both `label` (true for pass, false for fail) and `annotation` (a one-or-two-sentence explanation written for the human reviewer, ideally referencing what the code is trying to do) are required for every trace**. Commit to a verdict — if you genuinely cannot decide, you didn't read the trace or the code carefully enough. The labels you save here start unapproved; they only become part of the validated dataset once a human approves them in the labeling page.
 
-   > 🚨 **HARD RULE — DO NOT SKIP (agent-first mode only):** When the user picked Option A, you MUST call `mcp__Bitfab__update_agent_labels` with verdicts for every approved trace BEFORE running `startDataset.js` to open the labeling page. Sending the user into an agent-first review with no pre-labeled verdicts is a process violation. (In manual mode this step is unreachable, and the rule does not apply.)
+   > 🚨 **HARD RULE — DO NOT SKIP (agent-first mode only):** When the user picked Option A, you MUST call `mcp__Bitfab__update_agent_labels` with verdicts for every approved trace BEFORE navigating Studio to the labeling page. Sending the user into an agent-first review with no pre-labeled verdicts is a process violation. (In manual mode this step is unreachable, and the rule does not apply.)
 
    > **Made a mistake?** If you realize a verdict was wrong (e.g., you mislabeled a trace or want to re-evaluate), call `mcp__Bitfab__update_agent_labels` again with `{ traceId, archive: true }` for those traces. The previous label is hidden (kept for audit), and you can re-label the trace from scratch with another `update_agent_labels` call.
 8. **Attach candidate traces to the dataset** — Call `mcp__Bitfab__add_traces_to_dataset` with the `datasetId` chosen earlier and the array of approved candidate trace IDs (in agent-first mode, the ones you just labeled; in manual mode, the candidates the user approved in find-unlabeled). The call is idempotent — re-adding traces already in the dataset is a no-op, so it's safe to include the full set. If no new candidate traces were approved (the dataset was already populated), skip this step.
 
    > 🚨 **HARD RULE — DO NOT SKIP:** All approved candidate trace IDs MUST be attached to the dataset before opening the page. The page reviews the dataset's contents, not the trace function's label table. An empty dataset means an empty review.
-9. Open the dataset review page for the user. The mechanism depends on whether Studio mode is active.
-
-   **Studio mode (`studioMode = true`):** Use `navigateStudio.js` to route the already-open Studio to the dataset review page using the `sessionId` captured in the `studio/open` step:
+9. Open the dataset review page for the user. Use `navigateStudio.js` to route the already-open Studio to the dataset review page using the `sessionId` captured in the `studio/open` step:
 
    ```bash
    node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/navigateStudio.js" <sessionId> "/studio/trace-functions/<functionKey>/datasets/<datasetId>"
@@ -231,20 +217,8 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
    If the Studio was closed early (`session-ended` event from the background process), skip this step and continue directly to `build-dataset`.
 
-   **Non-Studio mode (`studioMode = false`):** Launch `startDataset.js` as a background process. This opens a separate browser window for dataset review:
-
-   ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/startDataset.js" <functionKey> <datasetId>
-   ```
-
-   Run it via your runtime's "long-running exec session" mechanism.
-
-   The script outputs JSON lines on stdout as events occur, and blocks until the user clicks Done (or cancels). Keep the process alive and read its output in the next step.
-
    After opening, tell the user you've opened the dataset page and are waiting for them to finish reviewing. Then proceed to `await-event`.
-10. **Wait for user to finish dataset review.** Read events from the background process. The event source depends on which mode is active.
-
-   **Studio mode (`studioMode = true`):** Use the **Monitor tool** to watch for the next JSON event from the Studio background process (`openStudio.js`, started in `studio/open`). The output file path was returned when you started the background process. Set up a monitor that tails only NEW lines (skip lines already read) and filters for JSON event lines:
+10. **Wait for user to finish dataset review.** Use the **Monitor tool** to watch for the next JSON event from the Studio background process (`openStudio.js`, started in `studio/open`). The output file path was returned when you started the background process. Set up a monitor that tails only NEW lines (skip lines already read) and filters for JSON event lines:
 
    ```bash
    tail -f -n +<NEXT_LINE> <output-file> | grep -E --line-buffered '"event"'
@@ -258,17 +232,11 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - `{"event":"return-to-agent","sessionId":"..."}` — the user clicked **Done**, which triggered `returnToStudio()` and navigated back to `/studio`. Dataset review is complete.
    - `{"event":"session-ended","sessionId":"..."}` — the user closed Studio entirely.
 
-   **Non-Studio mode (`studioMode = false`):** Read new output from the `startDataset.js` background process (started in the previous step). The process emits these events:
-
-   - `{"event":"modify","datasetId":"...","ts":"..."}` — the user clicked **Edit with agent** on the dataset page. Go to the modify loop, then come back here.
-   - `{"event":"saved","status":"saved",...}` — the user clicked **Done**. Dataset review is complete. The `startDataset.js` process will exit after this.
-   - `{"event":"cancelled","status":"cancelled"}` — the user cancelled. Stop the flow.
-
    Filter to JSON lines only (skip status text). Route on the `event` field:
 
-   - **`event: edit-with-agent` (Studio) or `event: modify` (non-Studio)** — user clicked Edit with agent on the dataset page. Go to the modify loop, then come back here to read the next event
-   - **`event: return-to-agent` (Studio) or `event: saved` (non-Studio)** — user clicked Done on the dataset page. Dataset review is complete, move on to build + confirm the dataset
-   - **`event: session-ended` (Studio) or `event: cancelled` (non-Studio)** — user closed Studio or cancelled. Stop the flow
+   - **`event: edit-with-agent`** — user clicked Edit with agent on the dataset page. Go to the modify loop, then come back here to read the next event
+   - **`event: return-to-agent`** — user clicked Done on the dataset page. Dataset review is complete, move on to build + confirm the dataset
+   - **`event: session-ended`** — user closed Studio. Stop the flow
 11. **Modify loop: add or remove traces in chat** — The dataset page is still open in Studio and the user wants you to add or remove traces. Ask in plain chat:
 
    > What would you like to add or remove? You can describe by criteria (e.g. "drop empty-output traces", "add 5 more from last week with errors") or paste explicit trace IDs.
@@ -288,7 +256,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - **gate passes (at least one validated failing label)** — get explicit approval, then continue
 
    Unapproved agent labels do **not** satisfy this gate by design — `validated: true` excludes them.
-14. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep both the `datasetId` and the trace IDs in your working context throughout. In `dataset` mode, stop here: if `studioMode` is true, kill the Studio background process (send SIGINT or abort the background task). Surface the dataset summary (including the id) and exit so they can pick up later with `$bitfab:assistant experiment <key> <datasetId>`.
+14. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep both the `datasetId` and the trace IDs in your working context throughout. In `dataset` mode, stop here: kill the Studio background process (send SIGINT or abort the background task). Surface the dataset summary (including the id) and exit so they can pick up later with `$bitfab:assistant experiment <key> <datasetId>`.
 
 ## Phase 4: Diagnose & Plan
 
@@ -337,8 +305,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
 Run an iterative improvement loop. Each iteration:
 
-**Studio mode:** If `studioMode` is true, the Studio is already open (launched in the `studio/open` step at the start of the flow). Use the `sessionId` captured there for all `navigateStudio.js` calls. If the Studio was closed early (`session-ended` event), skip navigation calls but continue the improve loop normally.
-**Non-Studio mode:** Skip all `navigateStudio.js` calls in this phase. Experiment results are reported in chat only.
+The Studio is already open (launched in the `studio/open` step at the start of the flow). Use the `sessionId` captured there for all `navigateStudio.js` calls. If the Studio was closed early (`session-ended` event), skip navigation calls but continue the improve loop normally.
 
 1. **Run only when mode is `experiment`.**
 
@@ -349,7 +316,7 @@ Run an iterative improvement loop. Each iteration:
    3. **Load it.** Call `mcp__Bitfab__read_traces` with the dataset's trace IDs and `scope: "full"` so labels + annotations are in context.
    4. **Branch on the result:**
 
-   - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset has no validated failing labels** — tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; if `studioMode` is true, kill the Studio background process; then stop the flow
+   - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset has no validated failing labels** — tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; kill the Studio background process; then stop the flow
    - **dataset loaded (≥1 validated failing label)** — summarize the dataset for the user (counts of pass/fail) and the failure annotations. Pick a first experiment from the failure patterns and continue
 2. **Run only when mode is `experiment`.**
 
@@ -478,21 +445,13 @@ Run an iterative improvement loop. Each iteration:
 
    **Open experiment viewer.** If no `testRunId`s were captured (e.g. the replay script didn't print them), skip this step and continue, but flag it to the user in `share-results` so the script can be fixed before the next iteration.
 
-   **Studio mode (`studioMode = true`):** Navigate the already-open Studio to the experiments page using the `sessionId` captured in the `studio/open` step. Build the path with **every** `testRunId` you've collected across iterations of this phase (comma-separated):
+   Navigate the already-open Studio to the experiments page using the `sessionId` captured in the `studio/open` step. Build the path with **every** `testRunId` you've collected across iterations of this phase (comma-separated):
 
    ```bash
    node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/navigateStudio.js" <sessionId> "/studio/experiments?testRunIds=<testRunId1>,<testRunId2>,<testRunId3>"
    ```
 
    The command sends a navigate event and exits immediately. If the Studio was closed early (the background process exited with a `session-ended` event), skip this step entirely.
-
-   **Non-Studio mode (`studioMode = false`):** Run the open-experiments command with **every** `testRunId` (comma-separated). The viewer renders each experiment as a card so the user can compare pass/fail counts and drill into individual traces side-by-side.
-
-   ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/openExperiments.js" <testRunId1>,<testRunId2>,<testRunId3>
-   ```
-
-   The command opens a browser window and exits immediately.
 
    The user reviews the viewer alongside your `share-results` summary before deciding whether to iterate.
 9. **Run only when mode is `all` or `experiment`.**
@@ -534,6 +493,6 @@ Run an iterative improvement loop. Each iteration:
    >
    > The changes are in your working tree (not committed). Review the diffs and commit when ready."
 
-   If `studioMode` is true, kill the Studio background process (send SIGINT or abort the background task).
+   Kill the Studio background process (send SIGINT or abort the background task).
 
    If `Z > 0`, add one line naming the infra cause (e.g. "Z traces unreplayable — missing DB rows; refresh the dataset or scope to a snapshot next pass") so the user has a next step beyond the code.
