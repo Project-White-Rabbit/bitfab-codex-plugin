@@ -1,6 +1,6 @@
 ---
 name: assistant
-description: "Fix and experiment on code, or ask for guidance"
+description: "Iterate on a traced function to improve pass rates using failed traces, labeling, and replay. TRIGGER when: user wants to fix failing AI outputs, improve pass rates, debug LLM behavior, iterate on prompts, label traces, run experiments, or says anything like 'fix my AI', 'improve pass rate', 'why is this failing', 'iterate on traces', 'debug my agent', 'review traces'. SKIP when: user wants to instrument new code or set up tracing (use bitfab:setup instead)."
 ---
 
 # Bitfab Assistant

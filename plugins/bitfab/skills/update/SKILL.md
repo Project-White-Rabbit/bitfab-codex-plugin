@@ -1,6 +1,6 @@
 ---
 name: update
-description: "Update Bitfab plugin and SDK to the latest versions. Invoke with $bitfab:update [plugin|sdk|all]."
+description: "Update Bitfab plugin and SDK to the latest versions. TRIGGER when: user wants to update Bitfab, upgrade the SDK, get the latest version, or says 'update bitfab', 'upgrade SDK', 'latest version'. SKIP when: user wants to instrument code or iterate on traces.. Invoke with $bitfab:update [plugin|sdk|all]."
 ---
 
 # Bitfab Update

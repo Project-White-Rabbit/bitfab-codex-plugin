@@ -1,6 +1,6 @@
 ---
 name: setup
-description: "Set up and update the loop to improve AI features autonomously. Invoke with $bitfab:setup [<mode>] [<what to do>]."
+description: "Set up Bitfab tracing to improve AI features autonomously. TRIGGER when: user wants to instrument code, add tracing, set up Bitfab, observe AI calls, add evaluation, trace LLM functions, or says anything like 'instrument', 'add tracing', 'trace my code', 'set up observability', 'hook up Bitfab', 'start tracking'. SKIP when: user is iterating on existing traced functions or debugging failures (use bitfab:assistant instead).. Invoke with $bitfab:setup [<mode>] [<what to do>]."
 ---
 
 # Bitfab Setup
