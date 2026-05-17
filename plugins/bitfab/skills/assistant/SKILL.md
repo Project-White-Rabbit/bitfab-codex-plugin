@@ -96,7 +96,9 @@ The Studio is the companion browser surface for the entire assistant flow. It op
 
 If a `traceFunctionKey` was provided as an argument, skip the listing and the user prompt — but still cross-check the provided key against the local codebase before moving on. Otherwise, work through all four steps below:
 
-1. **Skip this step if a `traceFunctionKey` argument was provided** — use the argument directly and continue to cross-check. Otherwise, call `mcp__Bitfab__list_trace_functions` to list all available trace functions. Use **only** the keys and metadata returned (trace counts, last activity) — do NOT invent or infer descriptions of what each function does from its key name. Key names are often ambiguous or misleading, and guessing produces hallucinated descriptions that confuse the user.
+1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Identifying trace function"`.
+
+   **Skip this step if a `traceFunctionKey` argument was provided** — use the argument directly and continue to cross-check. Otherwise, call `mcp__Bitfab__list_trace_functions` to list all available trace functions. Use **only** the keys and metadata returned (trace counts, last activity) — do NOT invent or infer descriptions of what each function does from its key name. Key names are often ambiguous or misleading, and guessing produces hallucinated descriptions that confuse the user.
 2. **Cross-check each key against the local codebase** before presenting. For each returned key, `grep` the repo for string-literal uses of that exact key (across `*.ts`, `*.tsx`, `*.py`, `*.rb`, `*.go`, `*.baml`). Mark each function in the presented list as:
 
    - **✅ instrumented here** — found in this repo, with the file path
@@ -110,7 +112,9 @@ If a `traceFunctionKey` was provided as an argument, skip the listing and the us
 
 Check that this trace function has both instrumentation and a replay script.
 
-1. Search the codebase for the trace function key to confirm SDK usage:
+1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Verifying instrumentation"`.
+
+   Search the codebase for the trace function key to confirm SDK usage:
 
    - TypeScript: `grep -r "<traceFunctionKey>" --include="*.ts" --include="*.tsx"`
    - Python: `grep -r "<traceFunctionKey>" --include="*.py"`
@@ -154,7 +158,9 @@ A **dataset** is the named bucket of labeled traces an experiment replays agains
 
 In `dataset` mode this phase is the entry point — Phase 1 (function picker) and Phase 2 (instrumentation/replay verification) are skipped, so the trace function key comes from the argument. Before calling any MCP tools, grep the codebase for the key (e.g. `grep -r "<traceFunctionKey>" --include="*.ts" --include="*.tsx" --include="*.py" --include="*.rb" --include="*.go" --include="*.baml"`) and note the file path — every later step ("Label them yourself", and Phase 4 "Read the code" in `all` mode) needs it.
 
-1. **Pick or create a dataset** — Call `mcp__Bitfab__list_datasets` with the trace function key. Then branch on whether any exist. Hold the chosen `datasetId` in working context — every step from here on uses it.
+1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Building dataset"`.
+
+   **Pick or create a dataset** — Call `mcp__Bitfab__list_datasets` with the trace function key. Then branch on whether any exist. Hold the chosen `datasetId` in working context — every step from here on uses it.
 
    - **no datasets exist for this function (list_datasets returned empty)** — **don't ask** — silently call `mcp__Bitfab__create_dataset` with `traceFunctionKey: <key>` and `name: <key>` (just the trace function key as the name; the user can rename it later in the UI if they want). Hold the returned `datasetId` and continue. The first-time user shouldn't have to answer a name prompt before they've even seen the dataset.
    - **one or more datasets already exist** — present them to the user as a numbered choice, with one option per existing dataset (name · id · current trace count) plus a "Create new" option. Recommend the most recently used dataset that has traces. If the user picks an existing dataset, hold its id and continue. If the user picks "Create new", silently call `mcp__Bitfab__create_dataset` with `name: "<key> #N"` where N is one more than the number of existing datasets (e.g. `eval-assistant #2`) — don't ask for a name. Hold the new id and continue.
@@ -194,14 +200,18 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - **C — Open-ended, you decide** — no hypothesis yet; you sample broadly across recent traces, look for diversity, and surface anything that looks like a candidate failure or interesting edge case
 
    Hold the user's answer (the chosen option **and** any free-text detail) in working context — the next step uses it to shape the `mcp__Bitfab__search_traces` filters and which traces to prioritise reading. If they pick C, default to recent + diverse + non-empty outputs.
-5. **Find unlabeled traces** — Search without label filters to find unlabeled traces for the trace function. **Shape the search by the intent captured in the previous step** (or by the prior dataset's existing labels, if any): Option A = filter to traces matching the user's described failure pattern; Option B = filter by the user, session, or time window of the reported incidents; Option C = default sweep (recent, diverse inputs, non-empty outputs). Use `mcp__Bitfab__search_traces` with the relevant filters, then `mcp__Bitfab__read_traces` with `scope: "summary"` to read candidates and identify which are worth labeling — look for diverse inputs, traces that produced output (not empty), and traces that cover different scenarios under the chosen intent. Filter out near-duplicates and uninteresting traces. If every trace is already labeled and attached to this dataset, you can move straight on with no new candidates.
+5. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Searching traces"`.
+
+   **Find unlabeled traces** — Search without label filters to find unlabeled traces for the trace function. **Shape the search by the intent captured in the previous step** (or by the prior dataset's existing labels, if any): Option A = filter to traces matching the user's described failure pattern; Option B = filter by the user, session, or time window of the reported incidents; Option C = default sweep (recent, diverse inputs, non-empty outputs). Use `mcp__Bitfab__search_traces` with the relevant filters, then `mcp__Bitfab__read_traces` with `scope: "summary"` to read candidates and identify which are worth labeling — look for diverse inputs, traces that produced output (not empty), and traces that cover different scenarios under the chosen intent. Filter out near-duplicates and uninteresting traces. If every trace is already labeled and attached to this dataset, you can move straight on with no new candidates.
 6. **Ask how the user wants to label** — Before any verdicts go on these candidate traces, ask the user how the user wants to label them. There are exactly two modes, and the answer determines whether you call `mcp__Bitfab__update_agent_labels` at all:
 
    > A) **Agent labels first, I approve / edit** — agent makes a first pass; you approve or edit each verdict in the labeling page *(recommended)*
    > B) **I'll label them manually** — no agent verdicts; you label every trace from scratch in the labeling page
 
    Recommend Option A — an agent first pass turns the labeling page into a quick approve/edit review. But respect the user's choice: if they pick B, do **not** call `mcp__Bitfab__update_agent_labels` for any of these candidates. They want to label from scratch in the labeling page, with no agent verdicts pre-filled. If no new candidate traces were found in the previous step, skip this question and continue.
-7. **Agent first pass: label them yourself before opening the labeling page** — Reachable only when the user picked Option A in the previous step. **You** label the approved candidate traces so the labeling page becomes an approve/edit review instead of a blank labeling session. Call `mcp__Bitfab__read_traces` with `scope: "full"` on the approved trace IDs (batch them — up to 10 per call), read each trace's inputs / output / spans yourself, and decide for each one whether it looks like a PASS or a FAIL. **Ground your judgment in the codebase, not just the trace text.** Before you start labeling, read the instrumented function in the user's source (located in Phase 2 in `all` mode, or via the grep step in this phase's intro in `dataset` mode) and any nearby code that explains intent — comments, docstrings, README sections, related tests, BAML files — so you know what the function is *supposed* to do and what "good" looks like for it. Apply the same context to every trace: does this output achieve the function's goal as expressed in the code? Does it match the patterns in the already-validated traces? Then call `mcp__Bitfab__update_agent_labels` once with an array of `{ traceId, label, annotation }` objects — **both `label` (true for pass, false for fail) and `annotation` (a one-or-two-sentence explanation written for the human reviewer, ideally referencing what the code is trying to do) are required for every trace**. Commit to a verdict — if you genuinely cannot decide, you didn't read the trace or the code carefully enough. The labels you save here start unapproved; they only become part of the validated dataset once a human approves them in the labeling page.
+7. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Labeling traces"`.
+
+   **Agent first pass: label them yourself before opening the labeling page** — Reachable only when the user picked Option A in the previous step. **You** label the approved candidate traces so the labeling page becomes an approve/edit review instead of a blank labeling session. Call `mcp__Bitfab__read_traces` with `scope: "full"` on the approved trace IDs (batch them — up to 10 per call), read each trace's inputs / output / spans yourself, and decide for each one whether it looks like a PASS or a FAIL. **Ground your judgment in the codebase, not just the trace text.** Before you start labeling, read the instrumented function in the user's source (located in Phase 2 in `all` mode, or via the grep step in this phase's intro in `dataset` mode) and any nearby code that explains intent — comments, docstrings, README sections, related tests, BAML files — so you know what the function is *supposed* to do and what "good" looks like for it. Apply the same context to every trace: does this output achieve the function's goal as expressed in the code? Does it match the patterns in the already-validated traces? Then call `mcp__Bitfab__update_agent_labels` once with an array of `{ traceId, label, annotation }` objects — **both `label` (true for pass, false for fail) and `annotation` (a one-or-two-sentence explanation written for the human reviewer, ideally referencing what the code is trying to do) are required for every trace**. Commit to a verdict — if you genuinely cannot decide, you didn't read the trace or the code carefully enough. The labels you save here start unapproved; they only become part of the validated dataset once a human approves them in the labeling page.
 
    > 🚨 **HARD RULE — DO NOT SKIP (agent-first mode only):** When the user picked Option A, you MUST call `mcp__Bitfab__update_agent_labels` with verdicts for every approved trace BEFORE navigating Studio to the labeling page. Sending the user into an agent-first review with no pre-labeled verdicts is a process violation. (In manual mode this step is unreachable, and the rule does not apply.)
 
@@ -209,7 +219,9 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 8. **Attach candidate traces to the dataset** — Call `mcp__Bitfab__add_traces_to_dataset` with the `datasetId` chosen earlier and the array of approved candidate trace IDs (in agent-first mode, the ones you just labeled; in manual mode, the candidates the user approved in find-unlabeled). The call is idempotent — re-adding traces already in the dataset is a no-op, so it's safe to include the full set. If no new candidate traces were approved (the dataset was already populated), skip this step.
 
    > 🚨 **HARD RULE — DO NOT SKIP:** All approved candidate trace IDs MUST be attached to the dataset before opening the page. The page reviews the dataset's contents, not the trace function's label table. An empty dataset means an empty review.
-9. Open the dataset review page for the user. Use `navigateStudio.js` to route the already-open Studio to the dataset review page using the `sessionId` captured in the `studio/open` step:
+9. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Reviewing dataset"`.
+
+   Open the dataset review page for the user. Use `navigateStudio.js` to route the already-open Studio to the dataset review page using the `sessionId` captured in the `studio/open` step:
 
    ```bash
    node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/navigateStudio.js" <sessionId> "/studio/trace-functions/<functionKey>/datasets/<datasetId>"
@@ -264,7 +276,9 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
 **Run only when mode is `all`.**
 
-1. **Understand failures.** Using the failed traces you read in Phase 3 (or read them now if you haven't):
+1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Diagnosing failures"`.
+
+   **Understand failures.** Using the failed traces you read in Phase 3 (or read them now if you haven't):
 
    - Call `mcp__Bitfab__read_traces` on 3–5 failed traces with `scope: "full"`
 
@@ -311,6 +325,8 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
 1. **Run only when mode is `experiment`.**
 
+   **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Running experiments"`.
+
    The trace function key comes from the argument and no prior phase has run. Pick the dataset to iterate against, then locate the code:
 
    1. **Grep the codebase** for the trace function key (e.g. `grep -r "<traceFunctionKey>" --include="*.ts" --include="*.tsx" --include="*.py" --include="*.rb" --include="*.go" --include="*.baml"`) and note the file path. This is the code you'll iterate on.
@@ -332,11 +348,15 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - **always** — **Serial mode.** Iterate experiments one at a time in this main agent. Subagent worktrees wouldn't inherit bypass permissions, so their Edit tool would be denied
 3. **Run only when mode is `all` or `experiment`.**
 
+   **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Making changes"`.
+
    **Make the change.**
 
    - Explain to the user what you're changing and why, and confirm before editing
    - Edit the iteration target (prompt, code, tools, parameters)
 4. **Run only when mode is `all` or `experiment`.**
+
+   **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Running replay"`.
 
    **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `all` mode, or rehydrated at the start of this phase in `experiment` mode). Run the replay script with those specific traces.
 
@@ -396,6 +416,8 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - **high infra error rate (over half of items errored)** — signal is noisy. Flag the rate and ask the user whether to fix the env and retry, or proceed with the partial signal
    - **healthy or mixed run (at least one completed item, infra errors at most half of total)** — proceed. Carry `infraErrored` forward — surface as its own bucket in share-results, never folded into pass/fail
 6. **Run only when mode is `all` or `experiment`.**
+
+   **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
 
    **Evaluate against labels & annotations.** Score only items where `item.error` is unset. Items with `item.error` set are unreplayable (already classified) and go in their own bucket — never pass, fail, or regression.
 
@@ -483,7 +505,9 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
 **Run only when mode is `all` or `experiment`.**
 
-1. **Summary.** Present the final results similar to this. You may expand where appropriate based on context from the user:
+1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> completed "Done"`.
+
+   **Summary.** Present the final results similar to this. You may expand where appropriate based on context from the user:
 
    > "**Improvement summary for** `<traceFunctionKey>`:
    >
