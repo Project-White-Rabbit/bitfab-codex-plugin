@@ -69,7 +69,21 @@ In sub-modes, grep the codebase for `<key>` early so labeling and experiments ar
 
 The Studio is the companion browser surface for the entire assistant flow. It opens once at the start and stays open throughout all phases. Individual phases navigate the Studio to the relevant page (dataset review, experiment viewer, etc.) using `navigateStudio.js`. If the Studio background process outputs `{"event":"session-ended",...}` at any point, the user has closed the Studio early. This is not an error: continue the flow normally, but skip any `navigateStudio.js` calls for the rest of the session (the session is gone). Do **not** attempt to reopen the Studio.
 
-1. Start the Studio as a long-running background process. The command accepts an optional initial path argument so Studio opens directly at the relevant page:
+If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the Studio is unresponsive (browser tab closed, page crashed, etc.). Present the user with two options: (1) refresh the Studio browser tab and retry the navigation, or (2) open a fresh Studio by running `openStudio.js` with the desired path. If they choose option 2, update your `sessionId` to the new one.
+
+1. **If you already have a `sessionId` in context** from a previous `studio/open` step in this conversation, skip opening a new Studio. Instead, navigate the existing session to the desired page:
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/navigateStudio.js" <sessionId> <initialPath>
+   ```
+
+   This outputs JSON on stdout:
+   - `{"event":"navigated","sessionId":"...","path":"..."}`: Studio is alive and responded. Continue the flow with the existing sessionId.
+   - `{"event":"not-responding","sessionId":"..."}`: Studio did not respond within 12 seconds. Present the user with two options:
+     1. **Refresh and retry**: the user refreshes the Studio browser tab manually, then re-run the navigateStudio command.
+     2. **Open a new Studio**: proceed to open a fresh Studio (below).
+
+   **If you do NOT have a sessionId** (first run, or after choosing "Open a new Studio"), start the Studio as a long-running background process. The command accepts an optional initial path argument so Studio opens directly at the relevant page:
 
    - **`all` mode:** no path argument (opens at `/studio` root)
    - **`dataset <key>` mode:** pass `/studio/trace-functions/<key>/datasets`
