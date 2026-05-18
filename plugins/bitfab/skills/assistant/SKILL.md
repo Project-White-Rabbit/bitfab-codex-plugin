@@ -15,15 +15,16 @@ Use the local plugin MCP tools (`mcp__Bitfab__list_trace_functions`, `mcp__Bitfa
 - Present 2-5 concrete options
 - One decision per question — never batch
 
-This skill has three invocation modes. `all` walks every phase. The two sub-modes do one focused thing each, building a labeled dataset, or running experiments against an existing one, and require the trace function key as the argument because they skip the function picker (Phase 1) and instrumentation/replay verification (Phase 2).
+This skill has four invocation modes. `all` walks every phase. The three sub-modes do one focused thing each, and most require the trace function key as the argument because they skip the function picker (Phase 1) and instrumentation/replay verification (Phase 2).
 
 | Invocation | Action |
 |---|---|
 | `$bitfab:assistant` or `$bitfab:assistant all` | Full flow: pick function → verify instrumentation → pick or create dataset → label → diagnose → iterate → wrap up |
+| `$bitfab:assistant investigate [<key>]` | Free-form investigation of an issue the user is describing. Read traces and code as needed to characterize the problem, then offer to stop with a summary, write a written analysis report, or roll into dataset building. `<key>` is optional, the agent picks the function from what the user says when it isn't given |
 | `$bitfab:assistant dataset <key>` | Build or extend a labeled dataset for one function, then stop. No experiments run. Picks an existing dataset or creates a new one |
 | `$bitfab:assistant experiment <key> [<dataset-id>]` | Run experiments to fix failing traces against a labeled dataset, then wrap up. If `<dataset-id>` is omitted, you'll be asked to pick one. If the function has no datasets yet, run `$bitfab:assistant dataset <key>` first |
 
-In sub-modes, grep the codebase for `<key>` early so labeling and experiments are grounded in the actual instrumented function (the full flow does this in Phase 2; sub-modes skip Phase 2 entirely).
+In sub-modes that take a function key, grep the codebase for `<key>` early so labeling and experiments are grounded in the actual instrumented function (the full flow does this in Phase 2; sub-modes skip Phase 2 entirely). `investigate` mode does its own function lookup and code grep in Phase Investigate.
 
 **Studio** is the companion browser surface for the entire assistant flow. It opens automatically at the start and stays open throughout all phases. Individual phases navigate the Studio to the relevant page (dataset review, experiment viewer, etc.).
 
@@ -88,6 +89,7 @@ If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the St
    - **`all` mode:** no path argument (opens at `/studio` root)
    - **`dataset <key>` mode:** pass `/studio/trace-functions/<key>/datasets`
    - **`experiment <key>` mode:** pass `/studio/trace-functions/<key>/experiments`
+   - **`investigate [<key>]` mode:** if a key was provided, pass `/studio/trace-functions/<key>` (the function overview page); otherwise no path argument (opens at `/studio` root)
 
    ```bash
    node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudio.js" [initialPath]
@@ -164,9 +166,75 @@ Check that this trace function has both instrumentation and a replay script.
 
    If the user chooses **"Create replay now"**, invoke `$bitfab:setup replay`, then start building the dataset.
 
+## Phase Investigate: Free-form Investigation
+
+**Run only when mode is `investigate`.**
+
+Reached only from `investigate` mode. The user is describing an issue they want to understand (a customer complaint, a suspected failure pattern, a regression, or an open-ended "is something off with this function" question). Read traces and code as needed to characterize the problem, then hand the user a choice: stop with the in-chat summary, write a markdown analysis report, or roll into building a labeled dataset (Phase 3).
+
+1. Read what the user typed when they invoked `$bitfab:assistant investigate`. Two cases:
+
+   - **They passed a function key as the argument:** use it. Call `mcp__Bitfab__list_trace_functions` once to confirm the key exists and capture trace count + last activity for the explore step. Then grep the codebase for the key (`grep -r "<key>" --include="*.ts" --include="*.tsx" --include="*.py" --include="*.rb" --include="*.go" --include="*.baml"`) and note the file path. Hold both in working context.
+   - **They didn't pass a key:** read their description (failure pattern, customer complaint, "something seems off with X", etc.). Call `mcp__Bitfab__list_trace_functions` to see what exists. If exactly one function obviously matches the description by key + recent activity, use it (and grep for it). If several plausibly match, ask the user to pick one (recommend the best fit; list 2-4 alternatives by key, trace count, last activity). If nothing matches, ask the user to clarify or pass a key explicitly.
+
+   Do NOT invent or infer descriptions of what each function does from its key name. Use only what `mcp__Bitfab__list_trace_functions` returns plus what's in the codebase.
+2. Free-form investigation: use whatever combination of MCP and local tools fits the user's described concern. There is no fixed sequence. Typical moves:
+
+   - **Trace evidence:** call `mcp__Bitfab__search_traces` with filters that match the user's description (failure shape, recency, label state, user / session if mentioned), then `mcp__Bitfab__read_traces` with `scope: "summary"` or `scope: "full"` on the most informative ones.
+   - **Code context:** read the instrumented function and its call chain. If BAML files, related prompts, or upstream / downstream functions matter to the question, read those too.
+   - **Quantify if useful:** if the user asked something like "how often does X happen", run targeted `mcp__Bitfab__search_traces` calls with different filters to count.
+
+   Stop exploring once you can give the user a clear, evidence-backed account: what's going wrong (or "nothing obvious is going wrong"), when, how often, what the failure shape is, what code path is implicated, and one or two leading hypotheses. Hold the findings in working context for the next step. Cite specific trace IDs and code locations rather than vague summaries.
+3. Share the findings inline with the user first, in chat, structured roughly as:
+
+   > **What I looked at:** `<traceFunctionKey>` · `<N traces examined>` · `<filter criteria used>`
+   >
+   > **What I found:**
+   >
+   > - [Finding with cited trace IDs / code locations]
+   > - [Finding with cited trace IDs / code locations]
+   >
+   > **Leading hypotheses:**
+   >
+   > - [Hypothesis, what would confirm it]
+
+   Then ask the user for the next step. Recommend based on what the investigation surfaced: option C (dataset) if the findings include reproducible failures worth labeling and iterating on, option B (report) if the user will need to share or revisit the findings later, option A (stop) if the question was a one-off and the chat summary already answers it.
+
+   > A) **Stop here** — the in-chat summary is enough; no further artifact
+   > B) **Write an analysis report** — save the findings to a markdown file I can share or revisit later
+   > C) **Build a labeled dataset** — use these traces as seed candidates and label them so we can iterate against them later *(recommended)*
+
+   If the user picks option A, kill the Studio background process (send SIGINT or abort the background task) before stopping, so it doesn't linger as an orphan. Options B and C handle Studio cleanup themselves (the report step kills it on exit; the dataset path kills it in `hold-in-context`).
+4. Write a markdown report capturing the investigation. Path: `.bitfab/analysis/<traceFunctionKey>-<YYYY-MM-DD-HHmm>.md` (create the `.bitfab/analysis/` directory if missing; fall back to a path under the repo root or `os.tmpdir()` if the project root isn't writable). Use the `Write` tool with this structure:
+
+   ```markdown
+   # Investigation: <traceFunctionKey>
+
+   **Date:** <YYYY-MM-DD>
+   **Question / concern:** <one-paragraph recap of what the user asked>
+
+   ## What I looked at
+
+   <filters used, trace counts, time window>
+
+   ## Findings
+
+   <bulleted findings, each citing trace IDs and code locations>
+
+   ## Leading hypotheses
+
+   <bulleted, each paired with what would confirm or refute it>
+
+   ## Recommended next steps
+
+   <concrete actions: build a dataset around hypothesis X, instrument span Y, ship a code fix for Z, etc.>
+   ```
+
+   After writing, tell the user the file path so they can open or share it. Then stop, kill the Studio background process (send SIGINT or abort the background task), and exit. Do NOT roll into dataset building automatically; that is option C, not option B.
+
 ## Phase 3: Pick a Dataset and Label Traces
 
-**Run only when mode is `all` or `dataset`.**
+**Run only when mode is `all`, `dataset` or `investigate`.**
 
 A **dataset** is the named bucket of labeled traces an experiment replays against. This phase picks (or creates) one for the trace function, labels candidate traces, attaches them to the dataset, then hands off to the per-dataset review page where the user approves labels and can ask the agent to add or remove traces.
 
@@ -284,7 +352,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - **gate passes (at least one validated failing label)** — get explicit approval, then continue
 
    Unapproved agent labels do **not** satisfy this gate by design — `validated: true` excludes them.
-14. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep both the `datasetId` and the trace IDs in your working context throughout. In `dataset` mode, stop here: kill the Studio background process (send SIGINT or abort the background task). Surface the dataset summary (including the id) and exit so they can pick up later with `$bitfab:assistant experiment <key> <datasetId>`.
+14. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep both the `datasetId` and the trace IDs in your working context throughout. In `dataset` and `investigate` modes, stop here: kill the Studio background process (send SIGINT or abort the background task). Surface the dataset summary (including the id) and exit so they can pick up later with `$bitfab:assistant experiment <key> <datasetId>`.
 
 ## Phase 4: Diagnose & Plan
 
