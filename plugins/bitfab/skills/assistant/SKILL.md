@@ -84,7 +84,7 @@ If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the St
      1. **Refresh and retry**: the user refreshes the Studio browser tab manually, then re-run the navigateStudio command.
      2. **Open a new Studio**: proceed to open a fresh Studio (below).
 
-   **If you do NOT have a sessionId** (first run, or after choosing "Open a new Studio"), start the Studio as a long-running background process. The command accepts an optional initial path argument so Studio opens directly at the relevant page:
+   **If you do NOT have a sessionId** (first run, or after choosing "Open a new Studio"), start the Studio as a long-running background process. The command accepts an optional initial path argument so Studio opens directly at the relevant page, and an optional agent session ID (from the `agent_session_id` in your SessionStart context) so the studio session can be recovered after compaction:
 
    - **`all` mode:** no path argument (opens at `/studio` root)
    - **`dataset <key>` mode:** pass `/studio/trace-functions/<key>/datasets`
@@ -92,7 +92,7 @@ If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the St
    - **`investigate [<key>]` mode:** if a key was provided, pass `/studio/trace-functions/<key>` (the function overview page); otherwise no path argument (opens at `/studio` root)
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudio.js" [initialPath]
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudio.js" [initialPath] [agentSessionId]
    ```
 
    Run it via your runtime's "long-running exec session" mechanism.
@@ -105,6 +105,14 @@ If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the St
    - `{"event":"session-ended","sessionId":"..."}` if the user closes the Studio: the process exits. See the lifecycle note above.
 
    Status messages (e.g. "Opening Studio: ...") go to stderr, not stdout. Filter to JSON lines only.
+
+   **Recovering after compaction:** If the Studio is already open from a prior context window but you've lost the `sessionId`, recover it:
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/recoverStudio.js" <agentSessionId>
+   ```
+
+   It prints `{"studioSessionId":"...","agentSessionId":"..."}`. Use `studioSessionId` for all subsequent `navigateStudio.js` and `pushActivity.js` calls. If it returns `{"error":"no-active-studio"}`, the Studio was never opened or has been closed; open a new one.
 
 ## Phase 1: Identify the Trace Function
 
