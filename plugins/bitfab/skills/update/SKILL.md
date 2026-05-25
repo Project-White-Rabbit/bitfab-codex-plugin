@@ -69,6 +69,7 @@ Each line inside `<bitfab-sdk-status>` is a JSON object with fields:
 - `remoteCheckFailed` — `true` when the live registry lookup failed; trigger the agent fallback (step 5)
 - `updateAvailable` — `true` when `latest > current` OR when `renameFrom` is set (package rename needed)
 - `renameFrom` — when non-null (e.g. `"bitfab"`), the workspace uses the legacy package name and must be switched to `packageName` (`@bitfab/sdk`). The update step should remove the old package and install the new one, then update imports in source files.
+- `deprecated` — `true` when the workspace uses the legacy `bitfab` package name instead of `@bitfab/sdk`. Equivalent to `renameFrom !== null`; kept for backward compatibility.
 - `manifestPath` / `lockfilePath` — absolute paths of the files the info came from
 
 If there are **no lines** inside `<bitfab-sdk-status>`, the programmatic check found no SDK — but don't stop yet, run step 4 first. After that step, distinguish two cases:
