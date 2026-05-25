@@ -31,13 +31,13 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 **Opening a trace plan, when asked.** Opening trace plans is part of this skill, not a separate primitive — but only do it when the user asks (or the context clearly implies it, e.g. they said "show me what's captured"). Never auto-open. When triggered, run two sequential calls (step 2 needs the planId from step 1, so they can't be batched): (1) `mcp__Bitfab__get_trace_plan` with `{ traceFunctionKey: "<key>" }` returns the plan id, then (2) `navigateStudio.js <sessionId> "/studio/trace-plan/<planId>"` (substituting the id from step 1) routes the already-open Studio tab there in-place. The Studio chrome (header, session indicator, agent activity) stays mounted around the trace plan content — no new tab pops up. No questions, no preamble, no summary up-front. If no plan exists for the key, say so in one line and offer `$bitfab:setup modify <key>` to build one.
 
 
-🚨 **Blocking-process rule (applies to any plugin command described as "blocks until the user does X"):** When you launch a plugin CLI that blocks on a browser handoff (`login.js`, etc.), you MUST keep the exec session alive and keep polling it until the process exits on its own.
+🚨 **Blocking-process rule (applies to any plugin command described as "blocks until the user does X"):** When you launch a plugin CLI that blocks on a Studio interaction (`login.js`, etc.), you MUST keep the exec session alive and keep polling it until the process exits on its own.
 
-- Printing the URL is NOT completion. The process is still running, racing a loopback callback and a server-polled ticket — it will exit only after the user's browser action delivers a result (or after the timeout).
-- After sending the URL to the user, keep polling the live shell/exec session at least every few seconds with your normal "read more output" tool (`write_stdin`, `read`, or whatever your runtime's equivalent is for the long-running shell). Do not idle waiting for a user message.
-- Do not send a final "waiting for you to click Confirm" text and then stop polling — the user's confirmation does NOT come back to you as a chat message; it comes back as the plugin process exiting with output on stdout.
+- The process opens Studio (or navigates an existing Studio session) and polls for the user's action via agent session events. It exits only after the user completes the action in Studio (or after the timeout).
+- After launching the command, keep polling the live shell/exec session at least every few seconds with your normal "read more output" tool (`write_stdin`, `read`, or whatever your runtime's equivalent is for the long-running shell). Do not idle waiting for a user message.
+- Do not send a final "waiting for you to click Confirm" text and then stop polling; the user's confirmation does NOT come back to you as a chat message; it comes back as the plugin process exiting with output on stdout.
 - Stop polling only when one of: (a) the process exits 0 and prints its completion summary, (b) the process exits non-zero, or (c) the user explicitly cancels.
-- When the process exits, immediately continue with the next step in the flow — don't wait for another user message.
+- When the process exits, immediately continue with the next step in the flow, do not wait for another user message.
 
 ## Phase 0: Status + Update Check
 
@@ -84,16 +84,20 @@ If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the St
      1. **Refresh and retry**: the user refreshes the Studio browser tab manually, then re-run the navigateStudio command.
      2. **Open a new Studio**: proceed to open a fresh Studio (below).
 
-   **If you do NOT have a sessionId** (first run, or after choosing "Open a new Studio"), start the Studio as a long-running background process. The command accepts an optional initial path argument so Studio opens directly at the relevant page, and an optional agent session ID (from the `agent_session_id` in your SessionStart context) so the studio session can be recovered after compaction:
+   **If you do NOT have a sessionId** (first run, or after choosing "Open a new Studio"), start the Studio as a long-running background process. The command accepts an optional initial path argument so Studio opens directly at the relevant page, and an optional agent session ID (from the `agent_session_id` in your SessionStart context) so the studio session can be recovered after compaction.
 
-   - **`all` mode:** no path argument (opens at `/studio` root)
+   **The `initialPath` MUST start with `/studio`.** Never pass `/`, a bare URL, or any path outside the `/studio/` route tree. Omit the argument entirely to default to `/studio`.
+
+   - **`all` mode:** pass `/studio`
    - **`dataset <key>` mode:** pass `/studio/trace-functions/<key>/datasets`
    - **`experiment <key>` mode:** pass `/studio/trace-functions/<key>/experiments`
-   - **`investigate [<key>]` mode:** if a key was provided, pass `/studio/trace-functions/<key>` (the function overview page); otherwise no path argument (opens at `/studio` root)
+   - **`investigate [<key>]` mode:** if a key was provided, pass `/studio/trace-functions/<key>` (the function overview page); otherwise pass `/studio`
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudio.js" [initialPath] [agentSessionId]
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudio.js" <initialPath> [agentSessionId]
    ```
+
+   `initialPath` is required. Always pass it explicitly, even when using the default `/studio`.
 
    Run it via your runtime's "long-running exec session" mechanism.
 
@@ -254,7 +258,22 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
    - **no datasets exist for this function (list_datasets returned empty)** — **don't ask** — silently call `mcp__Bitfab__create_dataset` with `traceFunctionKey: <key>` and `name: <key>` (just the trace function key as the name; the user can rename it later in the UI if they want). Hold the returned `datasetId` and continue. The first-time user shouldn't have to answer a name prompt before they've even seen the dataset.
    - **one or more datasets already exist** — present them to the user as a numbered choice, with one option per existing dataset (name · id · current trace count) plus a "Create new" option. Recommend the most recently used dataset that has traces. If the user picks an existing dataset, hold its id and continue. If the user picks "Create new", silently call `mcp__Bitfab__create_dataset` with `name: "<key> #N"` where N is one more than the number of existing datasets (e.g. `eval-assistant #2`) — don't ask for a name. Hold the new id and continue.
-2. **Ask how to source candidate traces.** Before searching, decide *where* the candidate traces come from. Three real options:
+2. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Reviewing dataset"`.
+
+   Open the dataset review page for the user **immediately** after picking or creating the dataset. Use `navigateStudio.js` to route the already-open Studio to the dataset review page using the `sessionId` captured in the `studio/open` step:
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/navigateStudio.js" <sessionId> "/studio/trace-functions/<functionKey>/datasets/<datasetId>"
+   ```
+
+   The command sends a navigate event and exits immediately. The path must stay within the `/studio/` route tree so the Studio shell (header, session management) stays mounted. The `?session=` param is appended automatically by the shell's navigate handler.
+
+   The page opens in a "waiting for traces" state. As you search, label, and attach traces in the following steps, each `add_traces_to_dataset` call publishes a real-time event that the page picks up instantly, so the user sees traces stream in live without needing a refresh.
+
+   If the Studio was closed early (`session-ended` event from the background process), skip this step and continue directly to `ask-search-mode`.
+
+   After opening, briefly tell the user you've opened the dataset page and that traces will appear there as you add them. Then proceed to `ask-search-mode`.
+3. **Ask how to source candidate traces.** Before searching, decide *where* the candidate traces come from. Three real options:
 
    1. **Define new criteria** — agent searches unlabeled traces shaped by what the user wants to surface. Best when the user has a hypothesis or a specific failure pattern in mind.
    2. **Reuse existing labels for this function** — pull traces that already have a validated human or approved-agent label (from any prior dataset on this function) and seed the new dataset with them. Best when the user wants to hill-climb off prior labeling work — same labels, different cut, add more later.
@@ -272,7 +291,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    > A) **Define new criteria** — tell me what to find (failure pattern, customer reports, etc.) and I search unlabeled traces
    > B) **Reuse existing labels for this function** — seed the dataset with traces that already have validated labels, then optionally add more *(recommended)*
    > C) **Open — you decide** — broad sample with no hypothesis; ignore prior labels for the search shape
-3. **Seed dataset from existing validated labels.** Reachable only when the user picked Option B in `ask-search-mode`. Pull traces that already have a validated label (human-authored, or agent-authored and human-approved) for this function, attach them to the picked dataset, and route on whether the user also wants to add more.
+4. **Seed dataset from existing validated labels.** Reachable only when the user picked Option B in `ask-search-mode`. Pull traces that already have a validated label (human-authored, or agent-authored and human-approved) for this function, attach them to the picked dataset, and route on whether the user also wants to add more.
 
    1. Call `mcp__Bitfab__search_traces` with `traceFunctionKey: <key>`, `validated: true`, and a generous `limit` (50 is the cap). Both `labelResult: true` and `labelResult: false` matter — failures are the hill-climbing signal, but passes anchor the regression boundary. If 50 isn't enough to cover the function's labeled history, run a second call with `labelResult: false` only to bias toward fails first, then a third with `labelResult: true`. De-dupe trace IDs across calls.
    2. Call `mcp__Bitfab__read_traces` with `scope: "summary"` on the resulting trace IDs so the labels + annotations are in working context. Don't re-label them — these are already validated.
@@ -280,8 +299,8 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    4. Briefly summarize for the user: "Seeded the dataset with N reused labels (M fails, K passes). Want me to find more candidates to label, or is this set enough to move on?"
 
    > A) **Find more candidates to label** — go through the regular intent + search + label flow on top of the reused set
-   > B) **Move on with just the reused set** — skip further labeling; go straight to dataset review *(recommended)*
-4. **Ask what kinds of traces to find** — The user picked "Define new criteria" (or arrived here from the reuse path wanting more). Find out what they're actually trying to surface. The trace function may have thousands of traces; "what should I label?" is the question that makes the rest of this phase useful.
+   > B) **Move on with just the reused set** — skip further labeling; the dataset page is already open with the reused traces streamed in *(recommended)*
+5. **Ask what kinds of traces to find** — The user picked "Define new criteria" (or arrived here from the reuse path wanting more). Find out what they're actually trying to surface. The trace function may have thousands of traces; "what should I label?" is the question that makes the rest of this phase useful.
 
    When asking, ask the user with these options (and a free-text fallback so the user can describe something specific):
 
@@ -290,38 +309,25 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - **C — Open-ended, you decide** — no hypothesis yet; you sample broadly across recent traces, look for diversity, and surface anything that looks like a candidate failure or interesting edge case
 
    Hold the user's answer (the chosen option **and** any free-text detail) in working context — the next step uses it to shape the `mcp__Bitfab__search_traces` filters and which traces to prioritise reading. If they pick C, default to recent + diverse + non-empty outputs.
-5. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Searching traces"`.
+6. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Searching traces"`.
 
    **Find unlabeled traces** — Search without label filters to find unlabeled traces for the trace function. **Shape the search by the intent captured in the previous step** (or by the prior dataset's existing labels, if any): Option A = filter to traces matching the user's described failure pattern; Option B = filter by the user, session, or time window of the reported incidents; Option C = default sweep (recent, diverse inputs, non-empty outputs). Use `mcp__Bitfab__search_traces` with the relevant filters, then `mcp__Bitfab__read_traces` with `scope: "summary"` to read candidates and identify which are worth labeling — look for diverse inputs, traces that produced output (not empty), and traces that cover different scenarios under the chosen intent. Filter out near-duplicates and uninteresting traces. If every trace is already labeled and attached to this dataset, you can move straight on with no new candidates.
-6. **Ask how the user wants to label** — Before any verdicts go on these candidate traces, ask the user how the user wants to label them. There are exactly two modes, and the answer determines whether you call `mcp__Bitfab__update_agent_labels` at all:
+7. **Ask how the user wants to label** — Before any verdicts go on these candidate traces, ask the user how the user wants to label them. There are exactly two modes, and the answer determines whether you call `mcp__Bitfab__update_agent_labels` at all:
 
    > A) **Agent labels first, I approve / edit** — agent makes a first pass; you approve or edit each verdict in the labeling page *(recommended)*
    > B) **I'll label them manually** — no agent verdicts; you label every trace from scratch in the labeling page
 
    Recommend Option A — an agent first pass turns the labeling page into a quick approve/edit review. But respect the user's choice: if they pick B, do **not** call `mcp__Bitfab__update_agent_labels` for any of these candidates. They want to label from scratch in the labeling page, with no agent verdicts pre-filled. If no new candidate traces were found in the previous step, skip this question and continue.
-7. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Labeling traces"`.
+8. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Labeling traces"`.
 
    **Agent first pass: label them yourself before opening the labeling page** — Reachable only when the user picked Option A in the previous step. **You** label the approved candidate traces so the labeling page becomes an approve/edit review instead of a blank labeling session. Call `mcp__Bitfab__read_traces` with `scope: "full"` on the approved trace IDs (batch them — up to 10 per call), read each trace's inputs / output / spans yourself, and decide for each one whether it looks like a PASS or a FAIL. **Ground your judgment in the codebase, not just the trace text.** Before you start labeling, read the instrumented function in the user's source (located in Phase 2 in `all` mode, or via the grep step in this phase's intro in `dataset` mode) and any nearby code that explains intent — comments, docstrings, README sections, related tests, BAML files — so you know what the function is *supposed* to do and what "good" looks like for it. Apply the same context to every trace: does this output achieve the function's goal as expressed in the code? Does it match the patterns in the already-validated traces? Then call `mcp__Bitfab__update_agent_labels` once with an array of `{ traceId, label, annotation }` objects — **both `label` (true for pass, false for fail) and `annotation` (a one-or-two-sentence explanation written for the human reviewer, ideally referencing what the code is trying to do) are required for every trace**. Commit to a verdict — if you genuinely cannot decide, you didn't read the trace or the code carefully enough. The labels you save here start unapproved; they only become part of the validated dataset once a human approves them in the labeling page.
 
    > 🚨 **HARD RULE — DO NOT SKIP (agent-first mode only):** When the user picked Option A, you MUST call `mcp__Bitfab__update_agent_labels` with verdicts for every approved trace BEFORE navigating Studio to the labeling page. Sending the user into an agent-first review with no pre-labeled verdicts is a process violation. (In manual mode this step is unreachable, and the rule does not apply.)
 
    > **Made a mistake?** If you realize a verdict was wrong (e.g., you mislabeled a trace or want to re-evaluate), call `mcp__Bitfab__update_agent_labels` again with `{ traceId, archive: true }` for those traces. The previous label is hidden (kept for audit), and you can re-label the trace from scratch with another `update_agent_labels` call.
-8. **Attach candidate traces to the dataset** — Call `mcp__Bitfab__add_traces_to_dataset` with the `datasetId` chosen earlier and the array of approved candidate trace IDs (in agent-first mode, the ones you just labeled; in manual mode, the candidates the user approved in find-unlabeled). The call is idempotent — re-adding traces already in the dataset is a no-op, so it's safe to include the full set. If no new candidate traces were approved (the dataset was already populated), skip this step.
+9. **Attach candidate traces to the dataset** — Call `mcp__Bitfab__add_traces_to_dataset` with the `datasetId` chosen earlier and the array of approved candidate trace IDs (in agent-first mode, the ones you just labeled; in manual mode, the candidates the user approved in find-unlabeled). The call is idempotent — re-adding traces already in the dataset is a no-op, so it's safe to include the full set. If no new candidate traces were approved (the dataset was already populated), skip this step.
 
-   > 🚨 **HARD RULE — DO NOT SKIP:** All approved candidate trace IDs MUST be attached to the dataset before opening the page. The page reviews the dataset's contents, not the trace function's label table. An empty dataset means an empty review.
-9. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Reviewing dataset"`.
-
-   Open the dataset review page for the user. Use `navigateStudio.js` to route the already-open Studio to the dataset review page using the `sessionId` captured in the `studio/open` step:
-
-   ```bash
-   node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/navigateStudio.js" <sessionId> "/studio/trace-functions/<functionKey>/datasets/<datasetId>"
-   ```
-
-   The command sends a navigate event and exits immediately. The path must stay within the `/studio/` route tree so the Studio shell (header, session management) stays mounted. The `?session=` param is appended automatically by the shell's navigate handler.
-
-   If the Studio was closed early (`session-ended` event from the background process), skip this step and continue directly to `build-dataset`.
-
-   After opening, tell the user you've opened the dataset page and are waiting for them to finish reviewing. Then proceed to `await-event`.
+   The dataset review page is already open in Studio (opened earlier in `open-page`). Each trace you attach streams in live via real-time events, so the user sees them appear instantly. After attaching, tell the user the dataset is populated and ready for their review, then proceed to `await-event`.
 10. **Wait for user to finish dataset review.** Use the **Monitor tool** to watch for the next JSON event from the Studio background process (`openStudio.js`, started in `studio/open`). The output file path was returned when you started the background process. Set up a monitor that tails only NEW lines (skip lines already read) and filters for JSON event lines:
 
    ```bash

@@ -10,13 +10,13 @@ description: "Set up Bitfab tracing to improve AI features autonomously. TRIGGER
 - Present 2-5 concrete options
 - One decision per question — never batch
 
-**🚨 Blocking-process rule (applies to any plugin command described as "blocks until the user does X"):** When you launch a plugin CLI that blocks on a browser handoff (`login.js`, `startDataset.js`, `openTracePlan.js`, etc.), you MUST keep the exec session alive and keep polling it until the process exits on its own.
+**🚨 Blocking-process rule (applies to any plugin command described as "blocks until the user does X"):** When you launch a plugin CLI that blocks on a Studio interaction (`login.js`, `startDataset.js`, `openTracePlan.js`, etc.), you MUST keep the exec session alive and keep polling it until the process exits on its own.
 
-- Printing the URL is NOT completion. The process is still running, racing a loopback callback and a server-polled ticket — it exits only after the user's browser action delivers a result (or after the timeout).
-- After sending the URL to the user, keep polling the live shell/exec session every few seconds with your normal "read more output" tool. Do not idle waiting for a user message.
+- The process opens Studio (or navigates an existing Studio session) and polls for the user's action via agent session events. It exits only after the user completes the action in Studio (or after the timeout).
+- After launching the command, keep polling the live shell/exec session every few seconds with your normal "read more output" tool. Do not idle waiting for a user message.
 - The user's confirmation does NOT come back as a chat message; it comes back as the plugin process exiting with output on stdout.
 - Stop polling only when: (a) the process exits 0 with its completion summary, (b) the process exits non-zero, or (c) the user explicitly cancels.
-- When the process exits, immediately continue with the next step — don't wait for another user message.
+- When the process exits, immediately continue with the next step, do not wait for another user message.
 
 This skill has seven phases: **login**, **session-logs**, **instrument**, **modify**, **view**, **replay**, and **templates**. Run individually or all at once (`all` runs login → instrument → replay; `session-logs` is standalone and does not require login; `modify` is only invoked explicitly or as a branch from the Instrument step 2 menu; `view` is only invoked explicitly; `templates` is only invoked explicitly).
 
@@ -110,23 +110,13 @@ Authenticate with Bitfab and retrieve the API key.
    node "${BITFAB_PLUGIN_DIR}/dist/commands/login.js"
    ```
 
-   Run with 600000ms (10 minute) timeout. This opens the browser to a URL that **races two delivery paths**: a loopback HTTP callback on 127.0.0.1, and a server-polled handoff ticket (PKCE). Whichever resolves first wins — the ticket path works fine even when the CLI is sandboxed (Codex seatbelt, containers, SSH, cloud IDEs) because the browser delivers the token to the server and the CLI polls for it.
+   Run with 600000ms (10 minute) timeout. This opens Studio to the sign-in page and polls the server until the user completes authentication in the browser. The process exits when authentication succeeds or the 10-minute timeout fires.
 
-   **Per the Blocking-process rule at the top:** after `login.js` prints its URL, keep polling the live exec session until it exits. Do not send a "waiting for you to sign in" message and then idle — the user's sign-in will NOT arrive as a chat message; it arrives as `login.js` exiting with `Logged in as <email>` on stdout.
+   **Per the Blocking-process rule at the top:** after `login.js` opens Studio, keep polling the live exec session until it exits. Do not send a "waiting for you to sign in" message and then idle; the user's sign-in will NOT arrive as a chat message; it arrives as `login.js` exiting with `Logged in as <email>` on stdout.
 
-   **If the browser auto-launch appears to fail (Chrome crashes, you see a crash report, the browser never opens, no default browser is configured), do NOT abandon `login.js`.** The loopback server and the ticket channel both live inside the running `login.js` process — they stay valid for the full 10-minute timeout whether or not the auto-launch worked. Your job in that case is:
+   **If the browser fails to open**, `login.js` prints the Studio sign-in URL. Surface it to the user verbatim so they can open it manually. The polling loop stays active for the full 10-minute timeout regardless of whether auto-launch worked.
 
-   1. Leave `login.js` running. Do not kill it, do not start a new login, do not switch to the headless paste flow.
-   2. Copy the exact URL `login.js` printed (the one with `?callbackPort=…&ticket=…`) and surface it to the user verbatim. Ask them to open it in any browser on any device.
-   3. After ~4 seconds `login.js` will re-print the same URL with a "browser didn't open — paste this URL manually" banner; watch for that and relay it to the user if you see it.
-   4. Keep waiting on the same process. When the user opens the URL, the ticket channel (or the loopback callback if the browser is on the same machine and can reach loopback) will resolve and `login.js` will exit 0 with the credentials saved.
-
-   **Do NOT fall through to the headless flow pre-emptively** just because the environment looks sandboxed or the browser crashed. The ticket path is designed for exactly those environments, and it's still live. Only fall through to **Login (headless)** below when all of the following are true:
-   - `login.js` exited non-zero (not just "the loopback didn't bind"), OR
-   - the 10-minute timeout actually elapsed, OR
-   - the printed URL contained neither `callbackPort=` nor `ticket=` (indicating both channels failed to start — log the full login output so the user can debug).
-
-   If `login.js` is still running and the URL it printed includes `ticket=<uuid>`, the ticket channel is live — keep waiting; do not abandon it for a paste flow.
+   Only fall through to **Login (headless)** below when `login.js` exits non-zero or the 10-minute timeout elapsed.
 3. Call `mcp__Bitfab__get_bitfab_api_key` to retrieve the API key — **NEVER print or log the full key**. Stored at `~/.config/bitfab/credentials.json`, used for the `BITFAB_API_KEY` environment variable.
 4. Check whether session log consent has already been recorded:
 
@@ -155,7 +145,7 @@ Use this flow only when `login.js` itself can't deliver — i.e. both the loopba
 
 1. Determine the service URL. Default is `https://bitfab.ai`. If the user has a custom deployment, read it from `~/.config/bitfab/config.json` (field `serviceUrl`) or the `BITFAB_SERVICE_URL` environment variable.
 2. Tell the user:
-   > Open this URL in a browser on any device: **{serviceUrl}/plugin/auth/codex**
+   > Open this URL in a browser on any device: **{serviceUrl}/studio/auth/codex**
    >
    > Sign in with your Bitfab account. The page will show an API key with a copy button. Paste the token here when you have it.
 3. Wait for the user's next message — it will contain the token. Do NOT ask the user here (it adds an unnecessary extra step before the user can paste).
@@ -283,7 +273,7 @@ Bitfab captures every AI function call — inputs, outputs, and errors — so yo
 
    **One flow = one trace function key.** When an outer `@bitfab.span` / `withSpan` / `bitfab_span` and a framework handler wrap the same work (LangGraph `get_langgraph_callback_handler`, Claude Agent SDK `get_claude_agent_handler`), pass the **same key** to both — a second key splits one flow into two overlapping trace functions. Separate trace functions describe separate flows with their own standalone roots, never a sub-range of an outer flow.
 
-   Then post the plan to the browser confirmation UI via `mcp__Bitfab__create_trace_plan` and open it with the `openTracePlan.js` CLI — that command races a loopback callback and a server-polled handoff ticket so the browser → CLI hand-off works on SSH, Docker, WSL, cloud IDEs, etc. Same delivery pattern as `login.js` and `startDataset.js`.
+   Then post the plan to the browser confirmation UI via `mcp__Bitfab__create_trace_plan` and open it with the `openTracePlan.js` CLI, which navigates Studio to the trace plan page and polls for the user's Confirm/Cancel decision via agent session events.
 
    - Build a `TracePlanTree` (`{ rootId, nodes: { [id]: TraceNode } }`) from the same span tree you'd otherwise render. Each `TraceNode` carries `id` (stable, e.g. hash of `file:line:name`), `name`, `kind` ("manual" | "auto" | "pure"), `file`, `line`, `signature`, `parentId`, `childIds`, plus `framework` (for `[auto]` lines).
    - **Every captured node MUST include `sampleInput` and `sampleOutput`.** Without samples the confirmation page can't show the user what gets captured, which is the whole point. Construct realistic example values from the function's parameter and return types (Read the file and its return-type imports if needed); for SDK calls (`openai.chat.completions.create`, `generateText`, `cohere.rerank`, etc.) use the documented response shape. Do NOT call `create_trace_plan` with a captured node missing either field.
@@ -299,9 +289,9 @@ Bitfab captures every AI function call — inputs, outputs, and errors — so yo
    node "${BITFAB_PLUGIN_DIR}/dist/commands/openTracePlan.js" <planId>
    ```
 
-   (`${BITFAB_PLUGIN_DIR}` resolves to the plugin directory; `<planId>` is the id returned by `mcp__Bitfab__create_trace_plan`.) The script opens the trace plan page and **blocks** until the user clicks **Confirm** or **Chat about this** in the browser (up to 30 minutes). The script prints a handoff URL (with `callbackPort=` and `ticket=` query params) — surface it to the user verbatim so they can paste it into a browser if the auto-launch didn't open one.
+   (`${BITFAB_PLUGIN_DIR}` resolves to the plugin directory; `<planId>` is the id returned by `mcp__Bitfab__create_trace_plan`.) The script navigates Studio to the trace plan page and **blocks** until the user clicks **Confirm** or **Chat about this** (up to 30 minutes).
 
-   **Polling (mandatory — see the Blocking-process rule at the top of this skill):** after surfacing the URL, keep polling the live exec session until the process exits. Do NOT stop after printing the URL. Do NOT wait for a chat message from the user — their confirmation arrives as stdout on the already-running process, not as a new prompt. Poll every few seconds until one of these terminal conditions, then route accordingly:
+   **Polling (mandatory — see the Blocking-process rule at the top of this skill):** keep polling the live exec session until the process exits. Do NOT wait for a chat message from the user; their confirmation arrives as stdout on the already-running process, not as a new prompt. Poll every few seconds until one of these terminal conditions, then route accordingly:
 
    - On exit, parse the final stdout line:
      - `Trace plan confirmed [via …]` — the user confirmed in the browser. Call `mcp__Bitfab__get_trace_plan` with the plan id to read the authoritative `capturedNodeIds` for step 11. If it differs from your initial recommendation, prune `[auto]` lines whose ancestor manual span was uncaptured, and drop manual `●` wraps that aren't in the set.
@@ -387,9 +377,9 @@ Every Modify cycle targets **exactly one** trace function. Never batch multiple 
    node "${BITFAB_PLUGIN_DIR}/dist/commands/openTracePlan.js" <planId>
    ```
 
-   (`${BITFAB_PLUGIN_DIR}` resolves to the plugin directory; `<planId>` is the id returned by `mcp__Bitfab__create_trace_plan`.) The script opens the trace plan page and **blocks** until the user clicks **Confirm** or **Cancel** in the browser (up to 30 minutes). The script prints a handoff URL (with `callbackPort=` and `ticket=` query params) — surface it to the user verbatim so they can paste it into a browser if the auto-launch didn't open one.
+   (`${BITFAB_PLUGIN_DIR}` resolves to the plugin directory; `<planId>` is the id returned by `mcp__Bitfab__create_trace_plan`.) The script navigates Studio to the trace plan page and **blocks** until the user clicks **Confirm** or **Cancel** (up to 30 minutes).
 
-   **Polling (mandatory — see the Blocking-process rule at the top of this skill):** after surfacing the URL, keep polling the live exec session until the process exits. Do NOT stop after printing the URL. Do NOT wait for a chat message from the user — their confirmation arrives as stdout on the already-running process, not as a new prompt. Poll every few seconds until one of these terminal conditions, then route accordingly:
+   **Polling (mandatory — see the Blocking-process rule at the top of this skill):** keep polling the live exec session until the process exits. Do NOT wait for a chat message from the user; their confirmation arrives as stdout on the already-running process, not as a new prompt. Poll every few seconds until one of these terminal conditions, then route accordingly:
 
    3. **On exit, route by the final stdout line:**
       - `Trace plan confirmed [via …]` — call `mcp__Bitfab__get_trace_plan` with `{ planId }` to read the authoritative `capturedNodeIds` (the user may have toggled `pure` context nodes into the captured set or removed previously-captured nodes in the UI). Reconcile your edit plan with what's now in `capturedNodeIds` — drop manual `●` wraps no longer captured, add wraps for any newly captured nodes — then take branch **A** (Proceed).
@@ -432,11 +422,9 @@ Every View invocation targets **exactly one** trace function. The browser UI's C
    node "${BITFAB_PLUGIN_DIR}/dist/commands/openTracePlan.js" <planId>
    ```
 
-   (`${BITFAB_PLUGIN_DIR}` resolves to the plugin directory; `<planId>` is the id parsed from step 3.) The script opens the trace plan page and **blocks** until the user closes the browser tab or clicks Confirm/Cancel (up to 30 minutes). View is read-only — whichever button the user clicks, do **not** apply edits or call `mcp__Bitfab__get_trace_plan` again. When the process exits, report that the plan was viewed and stop.
+   (`${BITFAB_PLUGIN_DIR}` resolves to the plugin directory; `<planId>` is the id parsed from step 3.) The script navigates Studio to the trace plan page and **blocks** until the user closes Studio or clicks Confirm/Cancel (up to 30 minutes). View is read-only; whichever button the user clicks, do **not** apply edits or call `mcp__Bitfab__get_trace_plan` again. When the process exits, report that the plan was viewed and stop.
 
-   The script prints a handoff URL (with `callbackPort=` and `ticket=` query params) — surface it to the user verbatim so they can paste it into a browser if the auto-launch didn't open one.
-
-   **Polling (mandatory — see the Blocking-process rule at the top of this skill):** after surfacing the URL, keep polling the live exec session until the process exits. Do NOT stop after printing the URL. Do NOT wait for a chat message from the user — their dismissal arrives as stdout on the already-running process, not as a new prompt.
+   **Polling (mandatory — see the Blocking-process rule at the top of this skill):** keep polling the live exec session until the process exits. Do NOT wait for a chat message from the user; their dismissal arrives as stdout on the already-running process, not as a new prompt.
 
 ## Replay
 
@@ -519,7 +507,7 @@ Templates control how a span's input / output renders in the Bitfab UI. They are
 
    Run this in a long-lived exec session (`exec_command` with `is_background: true`); capture the session id so you can `read` it between edit rounds to check whether it has exited.
 
-   The command **blocks until the user clicks the Close button on the page**, then exits 0 with a single line like `Template preview closed [via loopback]`. If the user instead just closes the browser tab without clicking Close, the process keeps running until the 30-minute timeout. The page auto-redirects to the most recent trace for the function and renders it with the org's current templates; it subscribes to SSE `template:updated` events and re-renders the affected span automatically, so the user does NOT need to refresh after each edit.
+   The command **blocks until the user clicks Done in Studio**, then exits 0 with a single line like `Template preview closed [via studio]`. If the user instead just closes the browser tab without clicking Close, the process keeps running until the 30-minute timeout. The page auto-redirects to the most recent trace for the function and renders it with the org's current templates; it subscribes to SSE `template:updated` events and re-renders the affected span automatically, so the user does NOT need to refresh after each edit.
 
    🚨 **Stdout is a mixed JSONL + free-form stream.** Two event shapes flow over the same channel as the user interacts with the live preview:
 
