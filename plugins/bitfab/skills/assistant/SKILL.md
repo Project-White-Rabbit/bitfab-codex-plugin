@@ -90,7 +90,7 @@ If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the St
 
    - **`all` mode:** pass `/studio`
    - **`dataset <key>` mode:** pass `/studio/trace-functions/<key>/datasets`
-   - **`experiment <key>` mode:** pass `/studio/trace-functions/<key>/experiments`
+   - **`experiment <key>` mode:** pass `/studio/experiments`
    - **`investigate [<key>]` mode:** if a key was provided, pass `/studio/trace-functions/<key>` (the function overview page); otherwise pass `/studio`
 
    ```bash
