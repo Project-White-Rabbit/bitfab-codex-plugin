@@ -89,9 +89,9 @@ If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the St
    **The `initialPath` MUST start with `/studio`.** Never pass `/`, a bare URL, or any path outside the `/studio/` route tree. Omit the argument entirely to default to `/studio`.
 
    - **`all` mode:** pass `/studio`
-   - **`dataset <key>` mode:** pass `/studio/trace-functions/<key>/datasets`
+   - **`dataset <key>` mode:** pass `/studio/trace-functions/<key>/datasets/labeled`
    - **`experiment <key>` mode:** pass `/studio/experiments`
-   - **`investigate [<key>]` mode:** if a key was provided, pass `/studio/trace-functions/<key>` (the function overview page); otherwise pass `/studio`
+   - **`investigate [<key>]` mode:** if a key was provided, pass `/studio/trace-functions/<key>/datasets/labeled`; otherwise pass `/studio`
 
    ```bash
    node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudio.js" <initialPath> [agentSessionId]
