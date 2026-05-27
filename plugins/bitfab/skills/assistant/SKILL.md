@@ -266,11 +266,12 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
    The command sends a navigate event and exits immediately. The path must stay within the `/studio/` route tree so the Studio shell (header, session management) stays mounted. The `?session=` param is appended automatically by the shell's navigate handler.
 
-   The page opens in a "waiting for traces" state. As you search, label, and attach traces in the following steps, each `add_traces_to_dataset` call publishes a real-time event that the page picks up instantly, so the user sees traces stream in live without needing a refresh.
+   If the Studio was closed early (`session-ended` event from the background process), skip the navigation call but still check the dataset.
 
-   If the Studio was closed early (`session-ended` event from the background process), skip this step and continue directly to `ask-search-mode`.
+   **After opening, check whether the dataset already has traces.** Call `mcp__Bitfab__search_traces` with `traceFunctionKey: <key>`, `datasetId: <datasetId>`, `limit: 1` to see if the dataset is populated.
 
-   After opening, briefly tell the user you've opened the dataset page and that traces will appear there as you add them. Then proceed to `ask-search-mode`.
+   - **the dataset already has traces (search returned results)** — The dataset is not empty. Tell the user the dataset page is open with the existing traces, and they can review, approve, or edit labels there. Then go straight to waiting for their review. Do NOT ask how to source new candidates or offer to find more traces. The user should review what's already in the dataset first; they can request more traces via the "Edit with agent" button if needed.
+   - **the dataset is empty (search returned no results)** — The dataset has no traces yet. Tell the user the dataset page is open in a "waiting for traces" state, and that traces will appear there live as you search and add them. Then proceed to find candidate traces.
 3. **Ask how to source candidate traces.** Before searching, decide *where* the candidate traces come from. Three real options:
 
    1. **Define new criteria** — agent searches unlabeled traces shaped by what the user wants to surface. Best when the user has a hypothesis or a specific failure pattern in mind.
