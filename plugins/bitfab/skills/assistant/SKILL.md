@@ -70,7 +70,7 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 
 The Studio is the companion browser surface for the entire assistant flow. It opens once at the start and stays open throughout all phases. Individual phases navigate the Studio to the relevant page (dataset review, experiment viewer, etc.) using `navigateStudio.js`. If the Studio background process outputs `{"event":"session-ended",...}` at any point, the user has closed the Studio early. This is not an error: continue the flow normally, but skip any `navigateStudio.js` calls for the rest of the session (the session is gone). Do **not** attempt to reopen the Studio.
 
-If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the Studio is unresponsive (browser tab closed, page crashed, etc.). Present the user with two options: (1) refresh the Studio browser tab and retry the navigation, or (2) open a fresh Studio by running `openStudio.js` with the desired path. If they choose option 2, update your `sessionId` to the new one.
+If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the Studio browser tab may still be open but the event pipeline is broken (e.g. the `openStudio.js` background process died). **First try reconnecting** to the existing session by running `openStudio.js --existing <sessionId> [agentSessionId]` as a background process. This restarts the event poll loop without opening a new browser window. If the reconnected session receives events normally, continue with the same `sessionId`. If reconnecting also fails (e.g. the browser tab was truly closed), then open a fresh Studio with a new session and update your `sessionId`.
 
 1. **If you already have a `sessionId` in context** from a previous `studio/open` step in this conversation, skip opening a new Studio. Instead, navigate the existing session to the desired page:
 
@@ -80,11 +80,9 @@ If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the St
 
    This outputs JSON on stdout:
    - `{"event":"navigated","sessionId":"...","path":"..."}`: Studio is alive and responded. Continue the flow with the existing sessionId.
-   - `{"event":"not-responding","sessionId":"..."}`: Studio did not respond within 12 seconds. Present the user with two options:
-     1. **Refresh and retry**: the user refreshes the Studio browser tab manually, then re-run the navigateStudio command.
-     2. **Open a new Studio**: proceed to open a fresh Studio (below).
+   - `{"event":"not-responding","sessionId":"..."}`: Studio did not respond within 12 seconds. The browser tab may still be open. **Reconnect first**: run `openStudio.js --existing <sessionId> [agentSessionId]` as a background process to restart the event poll loop without opening a new window. Then retry the `navigateStudio.js` call. If it still fails, open a fresh Studio (below).
 
-   **If you do NOT have a sessionId** (first run, or after choosing "Open a new Studio"), start the Studio as a long-running background process. The command accepts an optional initial path argument so Studio opens directly at the relevant page, and an optional agent session ID (from the `agent_session_id` in your SessionStart context) so the studio session can be recovered after compaction.
+   **If you do NOT have a sessionId** (first run, or after reconnect also failed), start the Studio as a long-running background process. The command accepts an optional initial path argument so Studio opens directly at the relevant page, and an optional agent session ID (from the `agent_session_id` in your SessionStart context) so the studio session can be recovered after compaction.
 
    **The `initialPath` MUST start with `/studio`.** Never pass `/`, a bare URL, or any path outside the `/studio/` route tree. Omit the argument entirely to default to `/studio`.
 
