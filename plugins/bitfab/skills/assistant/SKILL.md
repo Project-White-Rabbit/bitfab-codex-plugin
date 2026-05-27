@@ -486,7 +486,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    cd <project-dir> && npx tsx scripts/replay.ts <pipeline-name> --trace-ids <id1>,<id2>,<id3>,...
    ```
 
-   **Before running: verify the replay script prints the full original and new output values to stdout for every item** (not just lengths, counts, hashes, or truncated previews). If it doesn't, fix the script first — the Replay Output Contract and example script live in the SDK reference at `https://docs.bitfab.ai/<language>-sdk#replay`. Subagents can't evaluate an improvement from `5 → 7 (+2)`.
+   **Before running: verify the replay script prints the full original and new output values AND the replay trace ID (`item.traceId`) to stdout for every item** (not just lengths, counts, hashes, or truncated previews). If it doesn't, fix the script first — the Replay Output Contract and example script live in the SDK reference at `https://docs.bitfab.ai/<language>-sdk#replay`. Subagents can't evaluate an improvement from `5 → 7 (+2)`, and missing trace IDs block verdict persistence.
 
    **Capture the `testRunId` from the replay output** — the SDK prints it (alongside `testRunUrl`) when the run completes. Track every `testRunId` produced across all iterations of this phase: you'll feed them to `open-experiments` so the user can review every experiment side-by-side in one viewer.
 
@@ -508,6 +508,8 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    4. Flag the tag to the user: it's a replay-only escape hatch, has no effect on prod execution, and is worth removing once the underlying issue is fixed.
 
    Use this when the goal is to unblock iteration on the root function, not when the child itself is what you're trying to improve.
+
+   **After the run, check whether replay trace IDs are populated.** Check whether `item.traceId` is a non-null string for every completed item. Hold the result as a boolean flag (`hasTraceIds`) for the `check-trace-id-support` step. If any are `null`, the user's SDK version or server does not support the replay trace ID mapping yet. Do NOT stop here, just flag it.
 
    **After the run, classify items before evaluating.** A failed item means one of two things: the new code produced a bad output (real signal), or the wrapped fn threw on infra (missing DB row, stale FK, rejected write, missing env). Infra failures are not regressions.
 
@@ -536,6 +538,25 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - **high infra error rate (over half of items errored)** — signal is noisy. Flag the rate and ask the user whether to fix the env and retry, or proceed with the partial signal
    - **healthy or mixed run (at least one completed item, infra errors at most half of total)** — proceed. Carry `infraErrored` forward — surface as its own bucket in share-results, never folded into pass/fail
 6. **Run only when mode is `all` or `experiment`.**
+
+   **Route on whether replay trace IDs are available.** Check the `hasTraceIds` flag from `replay-against-dataset`. This determines whether verdicts can be persisted to the server and whether the experiments page in Studio will show meaningful results.
+
+   - **replay trace IDs are populated (`hasTraceIds` is true)** — the SDK and server support trace ID mapping. Open the experiments page in Studio first (so the user can watch verdicts populate in real time), then evaluate and persist labels
+   - **replay trace IDs are null (`hasTraceIds` is false)** — tell the user: "Your Bitfab SDK or replay script needs to be updated to support replay trace IDs. Update to @bitfab/sdk 0.13.5+ and ensure your server's completeReplay endpoint returns the traceIds mapping. Without this, experiment results can't be persisted to Studio." Then proceed to text-only evaluation so the user still sees comparison results in-agent
+7. **Run only when mode is `all` or `experiment`.**
+
+   **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
+
+   **Evaluate results in-agent without persisting.** This path runs when replay trace IDs are unavailable (old SDK or server). The agent still compares original vs new outputs and derives pass/fail verdicts, but cannot persist them via `persistReplayLabels.js` or show them in Studio.
+
+   For each completed (non-errored) replay item, derive a verdict by comparing the replay's new output against the original trace's label and annotation:
+
+   - **fail**-labeled original: does the replay's new output address the annotation? If yes, mark as PASS. If no, mark as FAIL.
+   - **pass**-labeled original: preserved means PASS, regressed means FAIL.
+   - Unreplayable items (`item.error` set) go in their own bucket.
+
+   Hold the verdicts in working context for `share-results`. Since trace IDs are unavailable, do NOT attempt to run `persistReplayLabels.js` or open the experiments page.
+8. **Run only when mode is `all` or `experiment`.**
 
    **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
 
@@ -577,17 +598,17 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    4. Read its single JSON line on stdout. Hold the parsed result for the next step.
 
    **Spill working notes to a separate tmp file if context gets big.** Don't conflate working notes with the verdicts file — the script deletes the verdicts file on success.
-7. **Run only when mode is `all` or `experiment`.**
+9. **Run only when mode is `all` or `experiment`.**
 
    **Verify replay labels persisted.** Route on the `status` field of the JSON the script printed in `evaluate-results`. The script is the deterministic gate — if it didn't return `ok`, the agent's verdicts are NOT yet on the replay traces and the experiment delta will be wrong on the next iteration.
 
-   - **`status: "ok"` (every replay trace has a verdict or explicit skip persisted)** — labels are persisted on the replay traces and the verdicts file is gone. Continue to open-experiments
+   - **`status: "ok"` (every replay trace has a verdict or explicit skip persisted)** — labels are persisted on the replay traces and the verdicts file is gone. Continue to share-results (experiments page was already opened before evaluation)
    - **`status: "missing-coverage"` (script returned a non-empty `missingTraceIds` array)** — you under-verdicted. Read the missing replay trace IDs (use `mcp__Bitfab__read_traces` with `scope: "summary"` or `"full"` if you didn't already), decide each one (PASS / FAIL with annotation, or `skip: true` if genuinely ambiguous), write a NEW verdicts file at the same path covering ALL the originally expected IDs (the script needs the full `expectedTraceIds` list each call, not just the gaps), and re-run the script. Loop back here with the new result
    - **`status: "invalid-input"` (malformed verdicts JSON or missing fields)** — the verdicts file you wrote doesn't match the schema. Read the script's `message` field, fix the JSON (most common: missing annotation on a non-skip entry, missing traceId, expectedTraceIds empty), and re-run the script. Loop back here
    - **`status: "mcp-error"` (MCP call to update_agent_labels failed mid-batch)** — network or auth error. The script's `partialTraceIds` lists which IDs were already persisted. Tell the user, recommend re-running the script (it's idempotent — already-persisted labels just upsert), and loop back here. If it keeps failing, stop and surface the error
-8. **Run only when mode is `all` or `experiment`.**
+10. **Run only when mode is `all` or `experiment`.**
 
-   **Open experiment viewer.** If no `testRunId`s were captured (e.g. the replay script didn't print them), skip this step and continue, but flag it to the user in `share-results` so the script can be fixed before the next iteration.
+   **Open experiment viewer.** This step only runs when replay trace IDs are available (routed here from `check-trace-id-support`). If no `testRunId`s were captured, skip this step and continue to evaluate.
 
    Navigate the already-open Studio to the experiments page using the `sessionId` captured in the `studio/open` step. Build the path with **every** `testRunId` you've collected across iterations of this phase (comma-separated):
 
@@ -597,8 +618,8 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
    The command sends a navigate event and exits immediately. If the Studio was closed early (the background process exited with a `session-ended` event), skip this step entirely.
 
-   The user reviews the viewer alongside your `share-results` summary before deciding whether to iterate.
-9. **Run only when mode is `all` or `experiment`.**
+   The experiments page is opened before evaluation so the user can watch verdicts populate in real time as the agent persists labels in the next step.
+11. **Run only when mode is `all` or `experiment`.**
 
    **Share results to the user.**
 
@@ -615,6 +636,8 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
    - **If pass rate improved and no regressions**: ask the user to confirm whether they want to keep iterating or stop
    - **If pass rate improved but regressions exist or no improvement**: tell the user and propose to create a plan for new experiments and continue iterating.
+
+   **If running in text-only mode** (trace IDs were unavailable): append a note that cross-iteration comparison isn't available without trace IDs. Each iteration's results are visible only in-agent for the current run. Upgrading to `@bitfab/sdk` 0.13.5+ and updating the server unlocks persistent experiment tracking across iterations, side-by-side comparison in Studio, and the full experiments page.
 
    Ensure your question includes your recommended next step.
 
