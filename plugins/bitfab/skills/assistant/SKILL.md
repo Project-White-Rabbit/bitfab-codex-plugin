@@ -15,13 +15,13 @@ Use the local plugin MCP tools (`mcp__Bitfab__list_trace_functions`, `mcp__Bitfa
 - Present 2-5 concrete options
 - One decision per question — never batch
 
-This skill has four invocation modes. `all` walks every phase. The three sub-modes do one focused thing each, and most require the trace function key as the argument because they skip the function picker (Phase 1) and instrumentation/replay verification (Phase 2).
+This skill has four invocation modes, each a different entry point into the same pipeline. All modes converge: once they reach the shared phases (dataset → diagnose → experiments → wrap up), they follow the same path to the end. The user can stop early at any decision point, but the default is to continue. Most sub-modes require the trace function key as the argument because they skip the function picker (Phase 1) and instrumentation/replay verification (Phase 2).
 
 | Invocation | Action |
 |---|---|
 | `$bitfab:assistant` or `$bitfab:assistant all` | Full flow: pick function → verify instrumentation → pick or create dataset → label → diagnose → iterate → wrap up |
-| `$bitfab:assistant investigate [<key>]` | Free-form investigation of an issue the user is describing. Read traces and code as needed to characterize the problem, then offer to stop with a summary, write a written analysis report, or roll into dataset building. `<key>` is optional, the agent picks the function from what the user says when it isn't given |
-| `$bitfab:assistant dataset <key>` | Build or extend a labeled dataset for one function, then stop. No experiments run. Picks an existing dataset or creates a new one |
+| `$bitfab:assistant investigate [<key>]` | Free-form investigation of an issue the user is describing. Read traces and code as needed to characterize the problem, then offer to stop with a summary, write a written analysis report, or roll into dataset building and continue through experiments. `<key>` is optional, the agent picks the function from what the user says when it isn't given |
+| `$bitfab:assistant dataset <key>` | Build or extend a labeled dataset for one function, then diagnose failures and iterate with experiments. Picks an existing dataset or creates a new one |
 | `$bitfab:assistant experiment <key> [<dataset-id>]` | Run experiments to fix failing traces against a labeled dataset, then wrap up. If `<dataset-id>` is omitted, you'll be asked to pick one. If the function has no datasets yet, run `$bitfab:assistant dataset <key>` first |
 
 In sub-modes that take a function key, grep the codebase for `<key>` early so labeling and experiments are grounded in the actual instrumented function (the full flow does this in Phase 2; sub-modes skip Phase 2 entirely). `investigate` mode does its own function lookup and code grep in Phase Investigate.
@@ -71,8 +71,6 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 The Studio is the companion browser surface for the entire assistant flow. It opens once at the start and stays open throughout all phases. Individual phases navigate the Studio to the relevant page (dataset review, experiment viewer, etc.) using `navigateStudio.js`. If the Studio background process outputs `{"event":"session-ended",...}` at any point, the user has closed the Studio early. This is not an error: continue the flow normally, but skip any `navigateStudio.js` calls for the rest of the session (the session is gone). Do **not** attempt to reopen the Studio.
 
 If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the Studio browser tab may still be open but the event pipeline is broken (e.g. the `openStudio.js` background process died). **First try reconnecting** to the existing session by running `openStudio.js --existing <sessionId> [agentSessionId]` as a background process. This restarts the event poll loop without opening a new browser window. If the reconnected session receives events normally, continue with the same `sessionId`. If reconnecting also fails (e.g. the browser tab was truly closed), then open a fresh Studio with a new session and update your `sessionId`.
-
-**Closing the Studio.** When the flow ends (wrap-up, early exit, or sub-mode completion), always navigate to `/studio/close` via `navigateStudio.js` before killing the background process. This tells the Studio to clean up gracefully. If the Studio is already closed (`session-ended` or `not-responding`), skip the navigate and just kill the process.
 
 1. **If you already have a `sessionId` in context** from a previous `studio/open` step in this conversation, skip opening a new Studio. Instead, navigate the existing session to the desired page:
 
@@ -160,7 +158,7 @@ Check that this trace function has both instrumentation and a replay script.
    > C) **Pick a different function**
    > D) **Stop**
 
-   If the user chooses **"Instrument now"**, invoke `$bitfab:setup instrument`, then verify whether a replay script exists for this function. If **"Continue anyway"**, skip the replay-script check and start building the dataset, there's no local code to iterate on yet. If **"Stop"**, navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, kill the background process, then stop.
+   If the user chooses **"Instrument now"**, invoke `$bitfab:setup instrument`, then verify whether a replay script exists for this function. If **"Continue anyway"**, skip the replay-script check and start building the dataset — there's no local code to iterate on yet.
 2. Search for a replay script that covers this trace function:
 
    - Look for files matching `scripts/replay.*`, `scripts/*replay*`, or any file that imports `bitfab.replay` / `client.replay`
@@ -176,7 +174,7 @@ Check that this trace function has both instrumentation and a replay script.
    > B) **Pick a different function**
    > C) **Stop**
 
-   If the user chooses **"Create replay now"**, invoke `$bitfab:setup replay`, then start building the dataset. If **"Stop"**, navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, kill the background process, then stop.
+   If the user chooses **"Create replay now"**, invoke `$bitfab:setup replay`, then start building the dataset.
 
 ## Phase Investigate: Free-form Investigation
 
@@ -216,7 +214,7 @@ Reached only from `investigate` mode. The user is describing an issue they want 
    > B) **Write an analysis report** — save the findings to a markdown file I can share or revisit later
    > C) **Build a labeled dataset** — use these traces as seed candidates and label them so we can iterate against them later *(recommended)*
 
-   If the user picks option A, navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, then kill the background process. Options B and C handle Studio cleanup themselves (the report step closes it on exit; the dataset path closes it in `hold-in-context`).
+   If the user picks option A, kill the Studio background process (send SIGINT or abort the background task) before stopping, so it doesn't linger as an orphan. Option B kills Studio on exit (the report step). Option C continues through dataset building, diagnosis, and experiments, with Studio staying open throughout; Phase 6 kills it at wrap-up.
 4. Write a markdown report capturing the investigation. Path: `.bitfab/analysis/<traceFunctionKey>-<YYYY-MM-DD-HHmm>.md` (create the `.bitfab/analysis/` directory if missing; fall back to a path under the repo root or `os.tmpdir()` if the project root isn't writable). Use the `Write` tool with this structure:
 
    ```markdown
@@ -242,7 +240,7 @@ Reached only from `investigate` mode. The user is describing an issue they want 
    <concrete actions: build a dataset around hypothesis X, instrument span Y, ship a code fix for Z, etc.>
    ```
 
-   After writing, tell the user the file path so they can open or share it. Then navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, kill the background process, and exit. Do NOT roll into dataset building automatically; that is option C, not option B.
+   After writing, tell the user the file path so they can open or share it. Then stop, kill the Studio background process (send SIGINT or abort the background task), and exit. Do NOT roll into dataset building automatically; that is option C, not option B.
 
 ## Phase 3: Pick a Dataset and Label Traces
 
@@ -367,11 +365,11 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - **gate passes (at least one validated failing label)** — get explicit approval, then continue
 
    Unapproved agent labels do **not** satisfy this gate by design — `validated: true` excludes them.
-14. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep both the `datasetId` and the trace IDs in your working context throughout. In `investigate` mode, stop here: navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, then kill the background process. Surface the dataset summary (including the id) and exit so they can pick up later with `$bitfab:assistant experiment <key> <datasetId>`.
+14. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep both the `datasetId` and the trace IDs in your working context throughout.
 
 ## Phase 4: Diagnose & Plan
 
-**Run only when mode is `all` or `dataset`.**
+**Run only when mode is `all`, `dataset` or `investigate`.**
 
 1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Diagnosing failures"`.
 
@@ -382,7 +380,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    Synthesize the failure patterns — what's going wrong, what the common threads are.
 2. **Read the code.**
 
-   - Find the instrumented function in the codebase (in `all` mode you found it in Phase 2; in `dataset` mode you may need to locate it now)
+   - Find the instrumented function in the codebase (in `all` mode you found it in Phase 2; in `dataset` mode you grepped for the key in Phase 3's intro; in `investigate` mode you found it in Phase Investigate's gather-context step)
    - Read the full implementation — follow the call chain to understand the logic
    - Identify **iteration targets**: prompts, system messages, parameters, preprocessing, postprocessing
    - If BAML files are involved, read the relevant `.baml` files
@@ -414,8 +412,6 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
    Get the user's confirmation before proceeding.
 
-   In `dataset`, `experiment`, and `investigate` modes, this is the final step. Navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, kill the background process, then stop.
-
 ## Phase 5: Iterate with Replay
 
 Run an iterative improvement loop. Each iteration:
@@ -433,7 +429,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    3. **Load it.** Call `mcp__Bitfab__read_traces` with the dataset's trace IDs and `scope: "full"` so labels + annotations are in context.
    4. **Branch on the result:**
 
-   - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset has no validated failing labels** — tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, kill the background process, then stop the flow
+   - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset has no validated failing labels** — tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; kill the Studio background process; then stop the flow
    - **dataset loaded (≥1 validated failing label)** — summarize the dataset for the user (counts of pass/fail) and the failure annotations. Pick a first experiment from the failure patterns and continue
 2. **Run only when mode is `experiment`.**
 
@@ -445,9 +441,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
    - **(unreachable on this editor)** — **Parallel mode.** For each independent experiment, fork to a subagent using the Agent tool with `isolation: "worktree"` and `subagent_type: "general-purpose"`. The subagent edits its worktree, runs replay, returns its scored items + `testRunId` to this main agent
    - **always** — **Serial mode.** Iterate experiments one at a time in this main agent. Subagent worktrees wouldn't inherit bypass permissions, so their Edit tool would be denied
-3. **Run only when mode is `all`, `dataset` or `experiment`.**
-
-   **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Making changes"`.
+3. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Making changes"`.
 
    **Make the change.**
 
@@ -455,9 +449,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - For every file you intend to edit in this experiment: **read the file with the Read tool first** and keep its full contents in working memory as the **before** snapshot. Then edit. Then **read the file again** to capture the **after** snapshot. Both snapshots are required by the next step (`replay-against-dataset`) so the experiment dashboard can render the literal edit alongside the results — this is per-experiment, not cumulative
    - Hold a one-line **change description** in working memory too (e.g. "fix off-by-one in retry logic", "tighten extraction prompt"). It will be the experiment's title in the viewer
    - If a file is newly created, the before snapshot is the empty string `""`. If a file is deleted, the after snapshot is `""`. The path is always the repo-relative file path — no `repo`, `commit`, or other context fields
-4. **Run only when mode is `all`, `dataset` or `experiment`.**
-
-   **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Running replay"`.
+4. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Running replay"`.
 
    **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `all` mode, or rehydrated at the start of this phase in `experiment` mode).
 
@@ -524,9 +516,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - `total` — `result.items.length`; `0` or non-zero exit code = whole-replay crash
 
    If `completed === 0`, do not score pass/fail on an empty set — branch to `check-replay-health`.
-5. **Run only when mode is `all`, `dataset` or `experiment`.**
-
-   **Route on the counts and exit code.** Goal: keep infra noise out of evaluation. Read a sample of `item.error` strings (and stderr on crash) first to identify the DB-shaped pattern (missing record, FK / unique constraint, write rejected, connection refused, missing env).
+5. **Route on the counts and exit code.** Goal: keep infra noise out of evaluation. Read a sample of `item.error` strings (and stderr on crash) first to identify the DB-shaped pattern (missing record, FK / unique constraint, write rejected, connection refused, missing env).
 
    **🚨 Do not silently work around DB issues.** Do not drop affected trace IDs, stub the read in the script, gate writes behind a script-only flag, wrap the function in a rollback transaction, or edit the instrumented function to skip DB calls. Those all hide infra problems as fake passing or fake failing results and corrupt the experiment.
 
@@ -541,15 +531,11 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - **every item errored (completed is 0 but total is non-zero)** — systemic infra failure (usually env mismatch). Diagnose, confirm a script fix with the user, loop back
    - **high infra error rate (over half of items errored)** — signal is noisy. Flag the rate and ask the user whether to fix the env and retry, or proceed with the partial signal
    - **healthy or mixed run (at least one completed item, infra errors at most half of total)** — proceed. Carry `infraErrored` forward — surface as its own bucket in share-results, never folded into pass/fail
-6. **Run only when mode is `all`, `dataset` or `experiment`.**
-
-   **Route on whether replay trace IDs are available.** Check the `hasTraceIds` flag from `replay-against-dataset`. This determines whether verdicts can be persisted to the server and whether the experiments page in Studio will show meaningful results.
+6. **Route on whether replay trace IDs are available.** Check the `hasTraceIds` flag from `replay-against-dataset`. This determines whether verdicts can be persisted to the server and whether the experiments page in Studio will show meaningful results.
 
    - **replay trace IDs are populated (`hasTraceIds` is true)** — the SDK and server support trace ID mapping. Open the experiments page in Studio first (so the user can watch verdicts populate in real time), then evaluate and persist labels
    - **replay trace IDs are null (`hasTraceIds` is false)** — tell the user: "Your Bitfab SDK or replay script needs to be updated to support replay trace IDs. Update to @bitfab/sdk 0.13.5+ and ensure your server's completeReplay endpoint returns the traceIds mapping. Without this, experiment results can't be persisted to Studio." Then proceed to text-only evaluation so the user still sees comparison results in-agent
-7. **Run only when mode is `all`, `dataset` or `experiment`.**
-
-   **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
+7. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
 
    **Evaluate results in-agent without persisting.** This path runs when replay trace IDs are unavailable (old SDK or server). The agent still compares original vs new outputs and derives pass/fail verdicts, but cannot persist them via `persistReplayLabels.js` or show them in Studio.
 
@@ -560,9 +546,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - Unreplayable items (`item.error` set) go in their own bucket.
 
    Hold the verdicts in working context for `share-results`. Since trace IDs are unavailable, do NOT attempt to run `persistReplayLabels.js` or open the experiments page.
-8. **Run only when mode is `all`, `dataset` or `experiment`.**
-
-   **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
+8. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
 
    **Evaluate against labels & annotations.** Score only items where `item.error` is unset. Items with `item.error` set are unreplayable (already classified) and go in their own bucket — never pass, fail, or regression.
 
@@ -602,17 +586,13 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    4. Read its single JSON line on stdout. Hold the parsed result for the next step.
 
    **Spill working notes to a separate tmp file if context gets big.** Don't conflate working notes with the verdicts file — the script deletes the verdicts file on success.
-9. **Run only when mode is `all`, `dataset` or `experiment`.**
-
-   **Verify replay labels persisted.** Route on the `status` field of the JSON the script printed in `evaluate-results`. The script is the deterministic gate — if it didn't return `ok`, the agent's verdicts are NOT yet on the replay traces and the experiment delta will be wrong on the next iteration.
+9. **Verify replay labels persisted.** Route on the `status` field of the JSON the script printed in `evaluate-results`. The script is the deterministic gate — if it didn't return `ok`, the agent's verdicts are NOT yet on the replay traces and the experiment delta will be wrong on the next iteration.
 
    - **`status: "ok"` (every replay trace has a verdict or explicit skip persisted)** — labels are persisted on the replay traces and the verdicts file is gone. Continue to share-results (experiments page was already opened before evaluation)
    - **`status: "missing-coverage"` (script returned a non-empty `missingTraceIds` array)** — you under-verdicted. Read the missing replay trace IDs (use `mcp__Bitfab__read_traces` with `scope: "summary"` or `"full"` if you didn't already), decide each one (PASS / FAIL with annotation, or `skip: true` if genuinely ambiguous), write a NEW verdicts file at the same path covering ALL the originally expected IDs (the script needs the full `expectedTraceIds` list each call, not just the gaps), and re-run the script. Loop back here with the new result
    - **`status: "invalid-input"` (malformed verdicts JSON or missing fields)** — the verdicts file you wrote doesn't match the schema. Read the script's `message` field, fix the JSON (most common: missing annotation on a non-skip entry, missing traceId, expectedTraceIds empty), and re-run the script. Loop back here
    - **`status: "mcp-error"` (MCP call to update_agent_labels failed mid-batch)** — network or auth error. The script's `partialTraceIds` lists which IDs were already persisted. Tell the user, recommend re-running the script (it's idempotent — already-persisted labels just upsert), and loop back here. If it keeps failing, stop and surface the error
-10. **Run only when mode is `all`, `dataset` or `experiment`.**
-
-   **Open experiment viewer.** This step only runs when replay trace IDs are available (routed here from `check-trace-id-support`). If no `testRunId`s were captured, skip this step and continue to evaluate.
+10. **Open experiment viewer.** This step only runs when replay trace IDs are available (routed here from `check-trace-id-support`). If no `testRunId`s were captured, skip this step and continue to evaluate.
 
    Navigate the already-open Studio to the experiments page using the `sessionId` captured in the `studio/open` step. Build the path with **every** `testRunId` you've collected across iterations of this phase (comma-separated):
 
@@ -623,9 +603,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    The command sends a navigate event and exits immediately. If the Studio was closed early (the background process exited with a `session-ended` event), skip this step entirely.
 
    The experiments page is opened before evaluation so the user can watch verdicts populate in real time as the agent persists labels in the next step.
-11. **Run only when mode is `all`, `dataset` or `experiment`.**
-
-   **Share results to the user.**
+11. **Share results to the user.**
 
    > "After N experiments these are the results: X/Y traces now pass (Z unreplayable, excluded from pass/fail).
    >
@@ -650,8 +628,6 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
 ## Phase 6: Validate & Wrap Up
 
-**Run only when mode is `all`, `dataset` or `experiment`.**
-
 1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> completed "Done"`.
 
    **Summary.** Present the final results similar to this. You may expand where appropriate based on context from the user:
@@ -666,6 +642,6 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    >
    > The changes are in your working tree (not committed). Review the diffs and commit when ready."
 
-   Navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, then kill the background process.
+   Kill the Studio background process (send SIGINT or abort the background task).
 
    If `Z > 0`, add one line naming the infra cause (e.g. "Z traces unreplayable — missing DB rows; refresh the dataset or scope to a snapshot next pass") so the user has a next step beyond the code.
