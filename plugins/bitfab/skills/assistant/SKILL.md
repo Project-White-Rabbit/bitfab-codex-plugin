@@ -448,16 +448,41 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    **Make the change.**
 
    - Explain to the user what you're changing and why, and confirm before editing
-   - Edit the iteration target (prompt, code, tools, parameters)
+   - For every file you intend to edit in this experiment: **read the file with the Read tool first** and keep its full contents in working memory as the **before** snapshot. Then edit. Then **read the file again** to capture the **after** snapshot. Both snapshots are required by the next step (`replay-against-dataset`) so the experiment dashboard can render the literal edit alongside the results — this is per-experiment, not cumulative
+   - Hold a one-line **change description** in working memory too (e.g. "fix off-by-one in retry logic", "tighten extraction prompt"). It will be the experiment's title in the viewer
+   - If a file is newly created, the before snapshot is the empty string `""`. If a file is deleted, the after snapshot is `""`. The path is always the repo-relative file path — no `repo`, `commit`, or other context fields
 4. **Run only when mode is `all` or `experiment`.**
 
    **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Running replay"`.
 
-   **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `all` mode, or rehydrated at the start of this phase in `experiment` mode). Run the replay script with those specific traces.
+   **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `all` mode, or rehydrated at the start of this phase in `experiment` mode).
+
+   **Write the code-change payload first.** Before running the script, write a tmp JSON file (e.g. `/tmp/bitfab-code-change-<experimentN>.json`) using the snapshots captured in `make-change`:
+
+   ```json
+   {
+     "description": "<the one-line change description from make-change>",
+     "files": [
+       { "path": "<repo-relative path>", "before": "<full file contents before edit>", "after": "<full file contents after edit>" }
+     ]
+   }
+   ```
+
+   The schema is flat — every file object is exactly `{ path, before, after }`. Do **not** add `repo`, `commit`, or any other context fields; `path` is the sole identifier. Use `""` for newly created or deleted files. One JSON file per experiment — never reuse last iteration's payload.
+
+   **Before writing the JSON, check whether the replay script supports `--code-change`.** Grep the script for `code-change` or `code_change`. If neither appears, the script predates this feature and will silently ignore the flag (most arg parsers drop unknown flags without erroring). In that case, warn the user:
+
+   > "Your replay script doesn't support `--code-change` yet, so this experiment's code edit won't appear in the dashboard. Run `$bitfab:setup replay` after this session to regenerate the script with the flag."
+
+   Then **continue the experiment without the flag** — omit `--code-change` from the invocation and skip writing the JSON file. The replay itself is unaffected; only the code-change metadata is missing from the experiment viewer.
+
+   If the script does support the flag, run the replay with the trace IDs and `--code-change` pointing at the JSON file. The script forwards `description` + `files` into `client.replay()` as `codeChangeDescription` / `code_change_description` and `codeChangeFiles` / `code_change_files`, so the experiment viewer can render the literal edit next to the pass/fail counts.
 
    ```bash
    # The exact command depends on the replay script — adapt to what exists
-   # Example for TypeScript:
+   # Example for TypeScript (with code-change support):
+   cd <project-dir> && npx tsx scripts/replay.ts <pipeline-name> --trace-ids <id1>,<id2>,<id3>,... --code-change /tmp/bitfab-code-change-<experimentN>.json
+   # Without code-change support (older scripts):
    cd <project-dir> && npx tsx scripts/replay.ts <pipeline-name> --trace-ids <id1>,<id2>,<id3>,...
    ```
 
