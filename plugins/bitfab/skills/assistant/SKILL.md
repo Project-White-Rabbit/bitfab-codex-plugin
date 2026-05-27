@@ -341,7 +341,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - `{"event":"return-to-agent","sessionId":"..."}` — the user clicked **Done**, which triggered `returnToStudio()` and navigated back to `/studio`. Dataset review is complete.
    - `{"event":"session-ended","sessionId":"..."}` — the user closed Studio entirely.
 
-   Filter to JSON lines only (skip status text). Route on the `event` field:
+   Filter to JSON lines only (skip status text). **Stay silent while waiting.** Do NOT print a narration line for each monitor notification (e.g. "The user selected trace X", "The user navigated back"). The user can already see the monitor stream. Only speak when you reach a branch point below or hit an error. Route on the `event` field:
 
    - **`event: edit-with-agent`** — user clicked Edit with agent on the dataset page. Go to the modify loop, then come back here to read the next event
    - **`event: return-to-agent`** — user clicked Done on the dataset page. Dataset review is complete, move on to build + confirm the dataset
