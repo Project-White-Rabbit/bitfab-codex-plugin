@@ -382,7 +382,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    Synthesize the failure patterns — what's going wrong, what the common threads are.
 2. **Read the code.**
 
-   - Find the instrumented function in the codebase (in `all` mode you found it in Phase 2; this step is unreachable in `dataset` / `experiment` modes)
+   - Find the instrumented function in the codebase (in `all` mode you found it in Phase 2; in `dataset` mode you may need to locate it now)
    - Read the full implementation — follow the call chain to understand the logic
    - Identify **iteration targets**: prompts, system messages, parameters, preprocessing, postprocessing
    - If BAML files are involved, read the relevant `.baml` files
@@ -445,7 +445,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
    - **(unreachable on this editor)** — **Parallel mode.** For each independent experiment, fork to a subagent using the Agent tool with `isolation: "worktree"` and `subagent_type: "general-purpose"`. The subagent edits its worktree, runs replay, returns its scored items + `testRunId` to this main agent
    - **always** — **Serial mode.** Iterate experiments one at a time in this main agent. Subagent worktrees wouldn't inherit bypass permissions, so their Edit tool would be denied
-3. **Run only when mode is `all` or `experiment`.**
+3. **Run only when mode is `all`, `dataset` or `experiment`.**
 
    **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Making changes"`.
 
@@ -455,7 +455,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - For every file you intend to edit in this experiment: **read the file with the Read tool first** and keep its full contents in working memory as the **before** snapshot. Then edit. Then **read the file again** to capture the **after** snapshot. Both snapshots are required by the next step (`replay-against-dataset`) so the experiment dashboard can render the literal edit alongside the results — this is per-experiment, not cumulative
    - Hold a one-line **change description** in working memory too (e.g. "fix off-by-one in retry logic", "tighten extraction prompt"). It will be the experiment's title in the viewer
    - If a file is newly created, the before snapshot is the empty string `""`. If a file is deleted, the after snapshot is `""`. The path is always the repo-relative file path — no `repo`, `commit`, or other context fields
-4. **Run only when mode is `all` or `experiment`.**
+4. **Run only when mode is `all`, `dataset` or `experiment`.**
 
    **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Running replay"`.
 
@@ -524,7 +524,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - `total` — `result.items.length`; `0` or non-zero exit code = whole-replay crash
 
    If `completed === 0`, do not score pass/fail on an empty set — branch to `check-replay-health`.
-5. **Run only when mode is `all` or `experiment`.**
+5. **Run only when mode is `all`, `dataset` or `experiment`.**
 
    **Route on the counts and exit code.** Goal: keep infra noise out of evaluation. Read a sample of `item.error` strings (and stderr on crash) first to identify the DB-shaped pattern (missing record, FK / unique constraint, write rejected, connection refused, missing env).
 
@@ -541,13 +541,13 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - **every item errored (completed is 0 but total is non-zero)** — systemic infra failure (usually env mismatch). Diagnose, confirm a script fix with the user, loop back
    - **high infra error rate (over half of items errored)** — signal is noisy. Flag the rate and ask the user whether to fix the env and retry, or proceed with the partial signal
    - **healthy or mixed run (at least one completed item, infra errors at most half of total)** — proceed. Carry `infraErrored` forward — surface as its own bucket in share-results, never folded into pass/fail
-6. **Run only when mode is `all` or `experiment`.**
+6. **Run only when mode is `all`, `dataset` or `experiment`.**
 
    **Route on whether replay trace IDs are available.** Check the `hasTraceIds` flag from `replay-against-dataset`. This determines whether verdicts can be persisted to the server and whether the experiments page in Studio will show meaningful results.
 
    - **replay trace IDs are populated (`hasTraceIds` is true)** — the SDK and server support trace ID mapping. Open the experiments page in Studio first (so the user can watch verdicts populate in real time), then evaluate and persist labels
    - **replay trace IDs are null (`hasTraceIds` is false)** — tell the user: "Your Bitfab SDK or replay script needs to be updated to support replay trace IDs. Update to @bitfab/sdk 0.13.5+ and ensure your server's completeReplay endpoint returns the traceIds mapping. Without this, experiment results can't be persisted to Studio." Then proceed to text-only evaluation so the user still sees comparison results in-agent
-7. **Run only when mode is `all` or `experiment`.**
+7. **Run only when mode is `all`, `dataset` or `experiment`.**
 
    **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
 
@@ -560,7 +560,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - Unreplayable items (`item.error` set) go in their own bucket.
 
    Hold the verdicts in working context for `share-results`. Since trace IDs are unavailable, do NOT attempt to run `persistReplayLabels.js` or open the experiments page.
-8. **Run only when mode is `all` or `experiment`.**
+8. **Run only when mode is `all`, `dataset` or `experiment`.**
 
    **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
 
@@ -602,7 +602,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    4. Read its single JSON line on stdout. Hold the parsed result for the next step.
 
    **Spill working notes to a separate tmp file if context gets big.** Don't conflate working notes with the verdicts file — the script deletes the verdicts file on success.
-9. **Run only when mode is `all` or `experiment`.**
+9. **Run only when mode is `all`, `dataset` or `experiment`.**
 
    **Verify replay labels persisted.** Route on the `status` field of the JSON the script printed in `evaluate-results`. The script is the deterministic gate — if it didn't return `ok`, the agent's verdicts are NOT yet on the replay traces and the experiment delta will be wrong on the next iteration.
 
@@ -610,7 +610,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - **`status: "missing-coverage"` (script returned a non-empty `missingTraceIds` array)** — you under-verdicted. Read the missing replay trace IDs (use `mcp__Bitfab__read_traces` with `scope: "summary"` or `"full"` if you didn't already), decide each one (PASS / FAIL with annotation, or `skip: true` if genuinely ambiguous), write a NEW verdicts file at the same path covering ALL the originally expected IDs (the script needs the full `expectedTraceIds` list each call, not just the gaps), and re-run the script. Loop back here with the new result
    - **`status: "invalid-input"` (malformed verdicts JSON or missing fields)** — the verdicts file you wrote doesn't match the schema. Read the script's `message` field, fix the JSON (most common: missing annotation on a non-skip entry, missing traceId, expectedTraceIds empty), and re-run the script. Loop back here
    - **`status: "mcp-error"` (MCP call to update_agent_labels failed mid-batch)** — network or auth error. The script's `partialTraceIds` lists which IDs were already persisted. Tell the user, recommend re-running the script (it's idempotent — already-persisted labels just upsert), and loop back here. If it keeps failing, stop and surface the error
-10. **Run only when mode is `all` or `experiment`.**
+10. **Run only when mode is `all`, `dataset` or `experiment`.**
 
    **Open experiment viewer.** This step only runs when replay trace IDs are available (routed here from `check-trace-id-support`). If no `testRunId`s were captured, skip this step and continue to evaluate.
 
@@ -623,7 +623,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    The command sends a navigate event and exits immediately. If the Studio was closed early (the background process exited with a `session-ended` event), skip this step entirely.
 
    The experiments page is opened before evaluation so the user can watch verdicts populate in real time as the agent persists labels in the next step.
-11. **Run only when mode is `all` or `experiment`.**
+11. **Run only when mode is `all`, `dataset` or `experiment`.**
 
    **Share results to the user.**
 
@@ -650,7 +650,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
 ## Phase 6: Validate & Wrap Up
 
-**Run only when mode is `all` or `experiment`.**
+**Run only when mode is `all`, `dataset` or `experiment`.**
 
 1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> completed "Done"`.
 
