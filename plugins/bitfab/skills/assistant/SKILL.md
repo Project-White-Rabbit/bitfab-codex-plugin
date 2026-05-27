@@ -91,7 +91,7 @@ If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the St
    - **`all` mode:** pass `/studio`
    - **`dataset <key>` mode:** pass `/studio/trace-functions/<key>/datasets/labeled`
    - **`experiment <key>` mode:** pass `/studio`
-   - **`investigate [<key>]` mode:** if a key was provided, pass `/studio/trace-functions/<key>/datasets/labeled`; otherwise pass `/studio`
+   - **`investigate [<key>]` mode:** pass `/studio`
 
    ```bash
    node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudio.js" <initialPath> [agentSessionId]
