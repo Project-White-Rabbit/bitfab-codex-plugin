@@ -72,6 +72,8 @@ The Studio is the companion browser surface for the entire assistant flow. It op
 
 If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the Studio browser tab may still be open but the event pipeline is broken (e.g. the `openStudio.js` background process died). **First try reconnecting** to the existing session by running `openStudio.js --existing <sessionId> [agentSessionId]` as a background process. This restarts the event poll loop without opening a new browser window. If the reconnected session receives events normally, continue with the same `sessionId`. If reconnecting also fails (e.g. the browser tab was truly closed), then open a fresh Studio with a new session and update your `sessionId`.
 
+**Closing the Studio.** When the flow ends (wrap-up, early exit, or sub-mode completion), always navigate to `/studio/close` via `navigateStudio.js` before killing the background process. This tells the Studio to clean up gracefully. If the Studio is already closed (`session-ended` or `not-responding`), skip the navigate and just kill the process.
+
 1. **If you already have a `sessionId` in context** from a previous `studio/open` step in this conversation, skip opening a new Studio. Instead, navigate the existing session to the desired page:
 
    ```bash
@@ -158,7 +160,7 @@ Check that this trace function has both instrumentation and a replay script.
    > C) **Pick a different function**
    > D) **Stop**
 
-   If the user chooses **"Instrument now"**, invoke `$bitfab:setup instrument`, then verify whether a replay script exists for this function. If **"Continue anyway"**, skip the replay-script check and start building the dataset — there's no local code to iterate on yet.
+   If the user chooses **"Instrument now"**, invoke `$bitfab:setup instrument`, then verify whether a replay script exists for this function. If **"Continue anyway"**, skip the replay-script check and start building the dataset, there's no local code to iterate on yet. If **"Stop"**, navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, kill the background process, then stop.
 2. Search for a replay script that covers this trace function:
 
    - Look for files matching `scripts/replay.*`, `scripts/*replay*`, or any file that imports `bitfab.replay` / `client.replay`
@@ -174,7 +176,7 @@ Check that this trace function has both instrumentation and a replay script.
    > B) **Pick a different function**
    > C) **Stop**
 
-   If the user chooses **"Create replay now"**, invoke `$bitfab:setup replay`, then start building the dataset.
+   If the user chooses **"Create replay now"**, invoke `$bitfab:setup replay`, then start building the dataset. If **"Stop"**, navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, kill the background process, then stop.
 
 ## Phase Investigate: Free-form Investigation
 
@@ -214,7 +216,7 @@ Reached only from `investigate` mode. The user is describing an issue they want 
    > B) **Write an analysis report** — save the findings to a markdown file I can share or revisit later
    > C) **Build a labeled dataset** — use these traces as seed candidates and label them so we can iterate against them later *(recommended)*
 
-   If the user picks option A, kill the Studio background process (send SIGINT or abort the background task) before stopping, so it doesn't linger as an orphan. Options B and C handle Studio cleanup themselves (the report step kills it on exit; the dataset path kills it in `hold-in-context`).
+   If the user picks option A, navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, then kill the background process. Options B and C handle Studio cleanup themselves (the report step closes it on exit; the dataset path closes it in `hold-in-context`).
 4. Write a markdown report capturing the investigation. Path: `.bitfab/analysis/<traceFunctionKey>-<YYYY-MM-DD-HHmm>.md` (create the `.bitfab/analysis/` directory if missing; fall back to a path under the repo root or `os.tmpdir()` if the project root isn't writable). Use the `Write` tool with this structure:
 
    ```markdown
@@ -240,7 +242,7 @@ Reached only from `investigate` mode. The user is describing an issue they want 
    <concrete actions: build a dataset around hypothesis X, instrument span Y, ship a code fix for Z, etc.>
    ```
 
-   After writing, tell the user the file path so they can open or share it. Then stop, kill the Studio background process (send SIGINT or abort the background task), and exit. Do NOT roll into dataset building automatically; that is option C, not option B.
+   After writing, tell the user the file path so they can open or share it. Then navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, kill the background process, and exit. Do NOT roll into dataset building automatically; that is option C, not option B.
 
 ## Phase 3: Pick a Dataset and Label Traces
 
@@ -365,7 +367,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - **gate passes (at least one validated failing label)** — get explicit approval, then continue
 
    Unapproved agent labels do **not** satisfy this gate by design — `validated: true` excludes them.
-14. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep both the `datasetId` and the trace IDs in your working context throughout. In `investigate` mode, stop here: kill the Studio background process (send SIGINT or abort the background task). Surface the dataset summary (including the id) and exit so they can pick up later with `$bitfab:assistant experiment <key> <datasetId>`.
+14. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep both the `datasetId` and the trace IDs in your working context throughout. In `investigate` mode, stop here: navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, then kill the background process. Surface the dataset summary (including the id) and exit so they can pick up later with `$bitfab:assistant experiment <key> <datasetId>`.
 
 ## Phase 4: Diagnose & Plan
 
@@ -412,6 +414,8 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
    Get the user's confirmation before proceeding.
 
+   In `dataset`, `experiment`, and `investigate` modes, this is the final step. Navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, kill the background process, then stop.
+
 ## Phase 5: Iterate with Replay
 
 Run an iterative improvement loop. Each iteration:
@@ -429,7 +433,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    3. **Load it.** Call `mcp__Bitfab__read_traces` with the dataset's trace IDs and `scope: "full"` so labels + annotations are in context.
    4. **Branch on the result:**
 
-   - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset has no validated failing labels** — tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; kill the Studio background process; then stop the flow
+   - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset has no validated failing labels** — tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, kill the background process, then stop the flow
    - **dataset loaded (≥1 validated failing label)** — summarize the dataset for the user (counts of pass/fail) and the failure annotations. Pick a first experiment from the failure patterns and continue
 2. **Run only when mode is `experiment`.**
 
@@ -662,6 +666,6 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    >
    > The changes are in your working tree (not committed). Review the diffs and commit when ready."
 
-   Kill the Studio background process (send SIGINT or abort the background task).
+   Navigate to `/studio/close` via `navigateStudio.js` to gracefully close the Studio, then kill the background process.
 
    If `Z > 0`, add one line naming the infra cause (e.g. "Z traces unreplayable — missing DB rows; refresh the dataset or scope to a snapshot next pass") so the user has a next step beyond the code.
