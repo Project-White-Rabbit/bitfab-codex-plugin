@@ -169,7 +169,45 @@ Check that this trace function has both instrumentation and a replay script.
    > B) **Pick a different function**
    > C) **Stop**
 
-   If the user chooses **"Create replay now"**, invoke `$bitfab:setup replay`, then start building the dataset.
+   If the user chooses **"Create replay now"**, invoke `$bitfab:setup replay`, then check the script's capabilities.
+3. **Detect replay script capabilities.** Check what the replay script supports. These flags determine how experiment results are tracked and displayed in Phase 5. **If you already ran this step for the same trace function earlier in this session, skip it and continue. Re-run if the user switched functions via "Pick a different function".**
+
+   **1. Use the replay script located in the previous step** (or grep for `scripts/replay.*` / files importing `bitfab.replay` / `client.replay`).
+
+   **2. Grep the replay script for three capabilities:**
+
+   | Grep for | Flag | What it enables |
+   |----------|------|-----------------|
+   | `code-change` or `code_change` | `supportsCodeChanges` | Code diffs attached to each experiment in the dashboard |
+   | `experiment-group-id` or `experiment_group_id` | `supportsExperimentGroups` | Live streaming of results in Studio as replay runs |
+   | `traceId` or `trace_id` in the output/print section | `supportsReplayTraceIds` (tentative, confirmed post-replay) | Verdict persistence, cross-iteration comparison, Studio experiments page |
+
+   **3. Route on the result.**
+
+   If all three flags are true, skip the question and continue silently.
+
+   If one or more flags are false, tell the user which capabilities are missing and what they affect, then ask the user. List the missing capabilities in the question text:
+
+   > "Your replay script is missing support for:
+   >
+   > [if !supportsCodeChanges] **Code changes**: edits won't appear in the experiment dashboard
+   > [if !supportsExperimentGroups] **Experiment groups**: no live streaming; results appear in Studio after each run
+   > [if !supportsReplayTraceIds] **Replay trace IDs**: experiment results can't be persisted or compared across iterations"
+
+   > A) **Upgrade the replay script** — regenerate the script with full support, then continue *(recommended)*
+   > B) **Continue without** — run experiments with the current script; missing features are skipped
+4. **Upgrade the SDK and replay script.** The replay script references SDK APIs (`experimentGroupId`, `codeChangeDescription`, per-item `traceId`) that require a recent SDK. Upgrade the SDK first, then regenerate the script.
+
+   **1. Upgrade the SDK.** Read the resolved version from the lockfile (`pnpm-lock.yaml`, `poetry.lock`, `uv.lock`, `Gemfile.lock`) and compare against the latest. If outdated, run the package manager's update command:
+   - TypeScript: `pnpm update @bitfab/sdk` (in monorepos, scope with `--filter <pkg>`)
+   - Python: `uv lock --upgrade-package bitfab-py && uv sync` or `poetry update bitfab-py`
+   - Ruby: `bundle update bitfab --conservative`
+
+   If the SDK is on a legacy package name (e.g. `bitfab` instead of `@bitfab/sdk`), remove the old package and install the new one. Skip this step if the SDK is already at the latest version.
+
+   **2. Regenerate the replay script.** Invoke `$bitfab:setup replay` to regenerate the script with full flag support.
+
+   **3. Re-check capabilities.** After regeneration, re-grep the script for all three capability flags (`code-change`/`code_change`, `experiment-group-id`/`experiment_group_id`, `traceId`/`trace_id`) and update the flags in working context. If any are still missing after both upgrades, note it but continue.
 
 ## Phase Investigate: Free-form Investigation
 
@@ -451,7 +489,7 @@ Run an iterative improvement loop. Each iteration:
 
    - **(unreachable on this editor)** — **Parallel mode.** For each independent experiment, fork to a subagent using the Agent tool with `isolation: "worktree"` and `subagent_type: "general-purpose"`. The subagent edits its worktree, runs replay, returns its scored items + `testRunId` to this main agent
    - **always** — **Serial mode.** Iterate experiments one at a time in this main agent. Subagent worktrees wouldn't inherit bypass permissions, so their Edit tool would be denied
-3. **Detect replay script capabilities.** Before starting experiments, check what the replay script supports. These flags determine how experiment results are tracked and displayed. **If you already ran this step earlier in this session, skip it and continue to `make-change`.**
+3. **Detect replay script capabilities.** Check what the replay script supports. These flags determine how experiment results are tracked and displayed. **If you already ran this step in Phase 2 earlier in this session, skip it and continue to `make-change`.**
 
    **1. Locate the replay script** (you found it in Phase 2 in `all` mode, or grep for `scripts/replay.*` / files importing `bitfab.replay` / `client.replay` now).
 
