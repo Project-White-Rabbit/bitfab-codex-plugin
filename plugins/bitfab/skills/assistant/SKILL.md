@@ -41,6 +41,15 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 - Stop polling only when one of: (a) the process exits 0 and prints its completion summary, (b) the process exits non-zero, or (c) the user explicitly cancels.
 - When the process exits, immediately continue with the next step in the flow, do not wait for another user message.
 
+**CLI commands** available via Bash (all paths relative to `${BITFAB_PLUGIN_DIR}/dist/commands/`):
+
+| Command | Description |
+|---------|-------------|
+| `status.js` | Check plugin authentication and connection status |
+| `openStudioTo.js <path> [agentSessionId]` | Navigate an existing Studio session or open a new one at the given path |
+| `pushActivity.js {action} "{displayName}"` | Emit activity events to the Studio sidebar |
+| `persistReplayLabels.js <verdicts-file>` | Persist replay verdicts from a JSON file to Bitfab via MCP |
+
 ## Phase 0: Status + Update Check
 
 0. First, resolve `BITFAB_PLUGIN_DIR` if it isn't already exported in this shell. Run this block verbatim — it auto-detects dev / prod / custom-`CODEX_HOME` installs:

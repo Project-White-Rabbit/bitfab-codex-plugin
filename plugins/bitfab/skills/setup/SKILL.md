@@ -57,6 +57,16 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 | `$bitfab:setup session-logs` | Opt in or out of session log collection (no login required) |
 | `$bitfab:setup templates [<key>]` | Iterate on the span-rendering templates for one trace function |
 
+**CLI commands** available via Bash (all paths relative to `${BITFAB_PLUGIN_DIR}/dist/commands/`):
+
+| Command | Description |
+|---------|-------------|
+| `status.js` | Check plugin authentication and connection status |
+| `login.js` | Authenticate via browser OAuth (blocks until complete) |
+| `openTracePlan.js <planId>` | Open the trace plan confirmation UI in Studio (blocks until user confirms or cancels) |
+| `waitForTrace.js <trace-function-key>` | Poll for the first trace to arrive (blocks up to ~10 min) |
+| `startTemplatePreview.js <functionKey>` | Open the template editor preview in Studio (blocks until user clicks Done) |
+
 ## Preamble
 
 **Run only when mode is `all`.**

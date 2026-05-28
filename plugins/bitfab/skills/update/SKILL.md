@@ -13,6 +13,12 @@ Update the Bitfab Codex plugin and/or every workspace's SDK in the current proje
 | `$bitfab:update plugin` | Plugin update only — skips all SDK steps |
 | `$bitfab:update sdk` | SDK update only — skips the plugin check |
 
+**CLI commands** available via Bash (all paths relative to `${BITFAB_PLUGIN_DIR}/dist/commands/`):
+
+| Command | Description |
+|---------|-------------|
+| `update.js <mode>` | Run the plugin/SDK update script (checks versions, installs latest) |
+
 ## 0. Resolve `BITFAB_PLUGIN_DIR`
 
 Codex does not inject a plugin-root env var. Resolve it first (same block used by `setup` and `assistant`):
