@@ -164,7 +164,7 @@ Check that this trace function has both instrumentation and a replay script.
    > C) **Pick a different function**
    > D) **Stop**
 
-   If the user chooses **"Instrument now"**, invoke `$bitfab:setup instrument`, then verify whether a replay script exists for this function. If **"Continue anyway"**, skip the replay-script check and start building the dataset — there's no local code to iterate on yet.
+   If the user chooses **"Instrument now"**, tell the user to run `$bitfab:setup instrument` first, then come back with `$bitfab:assistant all <key>`. Do NOT invoke the setup skill from within this flow; it will break the assistant flow's continuity. If **"Continue anyway"**, skip the replay-script check and start building the dataset — there's no local code to iterate on yet.
 2. Search for a replay script that covers this trace function:
 
    - Look for files matching `scripts/replay.*`, `scripts/*replay*`, or any file that imports `bitfab.replay` / `client.replay`
@@ -180,7 +180,7 @@ Check that this trace function has both instrumentation and a replay script.
    > B) **Pick a different function**
    > C) **Stop**
 
-   If the user chooses **"Create replay now"**, invoke `$bitfab:setup replay`, then check the script's capabilities.
+   If the user chooses **"Create replay now"**, create the replay script inline: fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript#replay` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk#replay`), then write a new replay script following the template. The script must accept `--limit N`, `--trace-ids`, `--code-change <path>`, and `--experiment-group-id <uuid>` flags, and emit the full `ReplayResult` as JSON to stdout per the Replay Output Contract. Do NOT invoke `$bitfab:setup replay` as a separate skill. After creating the script, check its capabilities.
 3. **Detect replay script capabilities.** Check what the replay script supports. These flags determine how experiment results are tracked and displayed in Phase 5. **If you already ran this step for the same trace function earlier in this session, skip it and continue. Re-run if the user switched functions via "Pick a different function".**
 
    **1. Use the replay script located in the previous step** (or grep for `scripts/replay.*` / files importing `bitfab.replay` / `client.replay`).
@@ -216,9 +216,13 @@ Check that this trace function has both instrumentation and a replay script.
 
    If the SDK is on a legacy package name (e.g. `bitfab` instead of `@bitfab/sdk`), remove the old package and install the new one. Skip this step if the SDK is already at the latest version.
 
-   **2. Regenerate the replay script.** Invoke `$bitfab:setup replay` to regenerate the script with full flag support.
+   **2. Regenerate the replay script.** Locate the replay script for this trace function (found in `detect-replay-capabilities`). Fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript#replay` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk#replay`). Then edit the script to add the missing flags:
+   - **`--code-change <path>`**: parse the JSON file, pass `codeChangeDescription` and `codeChangeFiles` to `replay()`
+   - **`--experiment-group-id <uuid>`**: pass `experimentGroupId` to `replay()`
+   - **Replay Output Contract**: emit the full `ReplayResult` as one `JSON.stringify(result, null, 2)` block to stdout (including every item's `traceId`, `durationMs`, `tokens`, `model`). Human-readable summary goes to stderr.
+   Do NOT invoke `$bitfab:setup replay` as a separate skill; edit the script inline here.
 
-   **3. Re-check capabilities.** After regeneration, re-grep the script for all three capability flags (`code-change`/`code_change`, `experiment-group-id`/`experiment_group_id`, `traceId`/`trace_id`) and update the flags in working context. If any are still missing after both upgrades, note it but continue.
+   **3. Re-check capabilities.** After editing, re-grep the script for all three capability flags (`code-change`/`code_change`, `experiment-group-id`/`experiment_group_id`, `traceId`/`trace_id`) and update the flags in working context. If any are still missing after both upgrades, note it but continue.
 
 ## Phase Investigate: Free-form Investigation
 
@@ -542,9 +546,13 @@ Run an iterative improvement loop. Each iteration:
 
    If the SDK is on a legacy package name (e.g. `bitfab` instead of `@bitfab/sdk`), remove the old package and install the new one. Skip this step if the SDK is already at the latest version.
 
-   **2. Regenerate the replay script.** Invoke `$bitfab:setup replay` to regenerate the script with full flag support.
+   **2. Regenerate the replay script.** Locate the replay script for this trace function (found in `detect-replay-capabilities`). Fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript#replay` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk#replay`). Then edit the script to add the missing flags:
+   - **`--code-change <path>`**: parse the JSON file, pass `codeChangeDescription` and `codeChangeFiles` to `replay()`
+   - **`--experiment-group-id <uuid>`**: pass `experimentGroupId` to `replay()`
+   - **Replay Output Contract**: emit the full `ReplayResult` as one `JSON.stringify(result, null, 2)` block to stdout (including every item's `traceId`, `durationMs`, `tokens`, `model`). Human-readable summary goes to stderr.
+   Do NOT invoke `$bitfab:setup replay` as a separate skill; edit the script inline here.
 
-   **3. Re-check capabilities.** After regeneration, re-grep the **installed SDK dist** (not just the script) for all three capability flags and update the flags in working context. If any are still missing after both upgrades, note it but continue.
+   **3. Re-check capabilities.** After editing, re-grep the **installed SDK dist** (not just the script) for all three capability flags and update the flags in working context. If any are still missing after both upgrades, note it but continue.
 5. **Generate the experiment group ID and open the experiments page before making changes or running replay.** This lets the user watch results stream in live from the moment replay starts.
 
    **Generate an experiment group ID.** Generate a fresh UUID to use as the `experimentGroupId` for this iteration. This groups all test runs from this iteration together so the experiments page can stream results live as the replay runs.
