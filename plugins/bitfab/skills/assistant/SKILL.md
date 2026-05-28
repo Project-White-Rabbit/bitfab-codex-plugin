@@ -343,9 +343,12 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
    Filter to JSON lines only (skip status text). **Stay silent while waiting.** Do NOT print a narration line for each monitor notification (e.g. "The user selected trace X", "The user navigated back"). The user can already see the monitor stream. Only speak when you reach a branch point below or hit an error. Route on the `event` field:
 
+   **Template editing during labeling.** The user may also ask to edit a template in chat while the Monitor is waiting (e.g. "change the LLM view", "edit the function template", "make the output less verbose"). This is NOT a Studio event; it arrives as a regular user message. If the user asks to edit a template, go to the edit-template-loop step. **Do NOT invoke `$bitfab:setup templates`** — that navigates Studio away from the dataset page and breaks the labeling flow. Template editing is handled inline here.
+
    - **`event: edit-with-agent`** — user clicked Edit with agent on the dataset page. Go to the modify loop, then come back here to read the next event
    - **`event: return-to-agent`** — user clicked Done on the dataset page. Dataset review is complete, move on to build + confirm the dataset
    - **`event: session-ended`** — user closed Studio. Stop the flow
+   - **user asks to edit a template in chat** — user wants to change how traces render (e.g. 'edit the llm template', 'change the function view'). Go to the edit-template-loop, then come back here
 11. **Modify loop: add or remove traces in chat** — The dataset page is still open in Studio and the user wants you to add or remove traces. Ask in plain chat:
 
    > What would you like to add or remove? You can describe by criteria (e.g. "drop empty-output traces", "add 5 more from last week with errors") or paste explicit trace IDs.
@@ -358,14 +361,24 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - **Removing traces:** call `mcp__Bitfab__remove_traces_from_dataset` with the trace IDs to remove. The traces themselves aren't deleted, only their membership in the dataset.
 
    The dataset page reflects each add/remove live (SSE), so the user sees changes flow in as you make them. When you're done, summarize what changed in chat and **return to the await-event step to read the next event**. The user can click Edit with agent again for another modify round, or Done to finalize.
-12. **Build the dataset** — You already know the trace IDs in this dataset (you attached them in earlier steps and tracked any add/remove from modify rounds). Call `mcp__Bitfab__read_traces` with all of them and `scope: "full"` to load the labels + annotations into context. This is the working set for confirm + every Phase 5 experiment.
-13. **Confirm the dataset** — Present the dataset as a numbered choice: each entry showing (trace ID, label, annotation summary). The dataset must contain at least one **validated failing label** — i.e. at least one trace where a human either authored or approved a `false` label. To check, call `mcp__Bitfab__search_traces` restricted to the dataset trace IDs with `validated: true` and `labelResult: false`. Two outcomes:
+12. **Edit a trace view template inline.** The user wants to change how a span type renders. Handle this with MCP tools; do NOT invoke `$bitfab:setup templates`.
+
+   1. Call `mcp__Bitfab__get_template_reference` if you haven't already this conversation. It documents the Nunjucks engine, variables, and filters.
+   2. Identify the span type (`llm`, `agent`, `function`, `guardrail`, `handoff`, `custom`). If ambiguous, ask.
+   3. Call `mcp__Bitfab__get_template` with `spanType` and `traceFunctionKey` (from Phase 1) to read the current template.
+   4. Edit the template. Stay inside the documented variables and filters. Do not use `{%raw%}{% extends %}{%endraw%}`.
+   5. Call `mcp__Bitfab__update_template` with the full edited body. The dataset page re-renders automatically via SSE.
+   6. Acknowledge in one line. Do not paste the template body back.
+
+   Then return to the await-event step. If the user wants more edits, they'll ask again and you'll re-enter this step.
+13. **Build the dataset** — You already know the trace IDs in this dataset (you attached them in earlier steps and tracked any add/remove from modify rounds). Call `mcp__Bitfab__read_traces` with all of them and `scope: "full"` to load the labels + annotations into context. This is the working set for confirm + every Phase 5 experiment.
+14. **Confirm the dataset** — Present the dataset as a numbered choice: each entry showing (trace ID, label, annotation summary). The dataset must contain at least one **validated failing label** — i.e. at least one trace where a human either authored or approved a `false` label. To check, call `mcp__Bitfab__search_traces` restricted to the dataset trace IDs with `validated: true` and `labelResult: false`. Two outcomes:
 
    - **gate fails (no validated failing label — search returns nothing)** — tell the user and loop back to find or label more unlabeled traces
    - **gate passes (at least one validated failing label)** — get explicit approval, then continue
 
    Unapproved agent labels do **not** satisfy this gate by design — `validated: true` excludes them.
-14. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep both the `datasetId` and the trace IDs in your working context throughout.
+15. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep both the `datasetId` and the trace IDs in your working context throughout.
 
 ## Phase 4: Diagnose & Plan
 
