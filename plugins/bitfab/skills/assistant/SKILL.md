@@ -30,7 +30,7 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 
 **Studio** is the companion browser surface for the entire assistant flow. It opens automatically at the start and stays open throughout all phases. Individual phases navigate the Studio to the relevant page (dataset review, experiment viewer, etc.).
 
-**Opening a trace plan, when asked.** Opening trace plans is part of this skill, not a separate primitive — but only do it when the user asks (or the context clearly implies it, e.g. they said "show me what's captured"). Never auto-open. When triggered, run two sequential calls (step 2 needs the planId from step 1, so they can't be batched): (1) `mcp__Bitfab__get_trace_plan` with `{ traceFunctionKey: "<key>" }` returns the plan id, then (2) `navigateStudio.js <sessionId> "/studio/trace-plan/<planId>"` (substituting the id from step 1) routes the already-open Studio tab there in-place. The Studio chrome (header, session indicator, agent activity) stays mounted around the trace plan content — no new tab pops up. No questions, no preamble, no summary up-front. If no plan exists for the key, say so in one line and offer `$bitfab:setup modify <key>` to build one.
+**Opening a trace plan, when asked.** Opening trace plans is part of this skill, not a separate primitive — but only do it when the user asks (or the context clearly implies it, e.g. they said "show me what's captured"). Never auto-open. When triggered, run two sequential calls (step 2 needs the planId from step 1, so they can't be batched): (1) `mcp__Bitfab__get_trace_plan` with `{ traceFunctionKey: "<key>" }` returns the plan id, then (2) `openStudioTo.js "/studio/trace-plan/<planId>"` (substituting the id from step 1) routes Studio there in-place. The command finds an active session or opens a new one automatically. The Studio chrome (header, session indicator, agent activity) stays mounted around the trace plan content. No questions, no preamble, no summary up-front. If no plan exists for the key, say so in one line and offer `$bitfab:setup modify <key>` to build one.
 
 
 🚨 **Blocking-process rule (applies to any plugin command described as "blocks until the user does X"):** When you launch a plugin CLI that blocks on a Studio interaction (`login.js`, etc.), you MUST keep the exec session alive and keep polling it until the process exits on its own.
@@ -70,53 +70,46 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 
 ## Studio Lifecycle
 
-The Studio is the companion browser surface for the entire assistant flow. It opens once at the start and stays open throughout all phases. Individual phases navigate the Studio to the relevant page (dataset review, experiment viewer, etc.) using `navigateStudio.js`. If the Studio background process outputs `{"event":"session-ended",...}` at any point, the user has closed the Studio early. This is not an error: continue the flow normally, but skip any `navigateStudio.js` calls for the rest of the session (the session is gone). Do **not** attempt to reopen the Studio.
+The Studio is the companion browser surface for the entire assistant flow. It opens once at the start and stays open throughout all phases. Individual phases navigate the Studio to the relevant page (dataset review, experiment viewer, etc.) using `openStudioTo.js`.
 
-If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the Studio browser tab may still be open but the event pipeline is broken (e.g. the `openStudio.js` background process died). **First try reconnecting** to the existing session by running `openStudio.js --existing <sessionId> [agentSessionId]` as a background process. This restarts the event poll loop without opening a new browser window. If the reconnected session receives events normally, continue with the same `sessionId`. If reconnecting also fails (e.g. the browser tab was truly closed), then open a fresh Studio with a new session and update your `sessionId`.
+**`openStudioTo.js` handles session resolution automatically.** The `sessionId` argument is optional. When called:
+1. If a `sessionId` is provided, it tries that session first.
+2. If that fails (or no `sessionId` was given), it checks for an active Studio session in this worktree.
+3. If no active session exists, it opens a **new** Studio window at the target path.
 
-1. **If you already have a `sessionId` in context** from a previous `studio/open` step in this conversation, skip opening a new Studio. Instead, navigate the existing session to the desired page:
+Output events:
+- `{"event":"navigated","sessionId":"...","path":"..."}` — success (existing or new session).
+- `{"event":"not-responding","sessionId":"...","path":"..."}` — an active session exists but didn't respond. **This is a gate.** The user's tab might need a refresh. Use `AskUserQuestion`: "Studio isn't responding. Would you like to refresh the tab, or open a new Studio?" If the user says refresh, retry `openStudioTo.js`. If they say open new, run `openStudioTo.js` again (the stale session will have been cleared by then, so it will open fresh).
+- `{"event":"open-failed","sessionId":"...","reason":"..."}` — failed to open a new Studio. Surface the error.
+
+**Never use Playwright, `open`, `chrome-testing`, or any other browser automation to open Studio pages.** Always use `openStudioTo.js` which handles auth and session management.
+
+1. Open Studio at the initial path for this mode. `openStudioTo.js` is the single entry point for all Studio operations: it navigates an existing session or opens a new one automatically.
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/navigateStudio.js" <sessionId> <initialPath>
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" <path> [agentSessionId]
    ```
 
-   This outputs JSON on stdout:
-   - `{"event":"navigated","sessionId":"...","path":"..."}`: Studio is alive and responded. Continue the flow with the existing sessionId.
-   - `{"event":"not-responding","sessionId":"..."}`: Studio did not respond within 12 seconds. The browser tab may still be open. **Reconnect first**: run `openStudio.js --existing <sessionId> [agentSessionId]` as a background process to restart the event poll loop without opening a new window. Then retry the `navigateStudio.js` call. If it still fails, open a fresh Studio (below).
-
-   **If you do NOT have a sessionId** (first run, or after reconnect also failed), start the Studio as a long-running background process. The command accepts an optional initial path argument so Studio opens directly at the relevant page, and an optional agent session ID (from the `agent_session_id` in your SessionStart context) so the studio session can be recovered after compaction.
-
-   **The `initialPath` MUST start with `/studio`.** Never pass `/`, a bare URL, or any path outside the `/studio/` route tree. Omit the argument entirely to default to `/studio`.
+   **The path MUST start with `/studio`.** Never pass `/`, a bare URL, or any path outside the `/studio/` route tree.
 
    - **`all` mode:** pass `/studio`
    - **`dataset <key>` mode:** pass `/studio/trace-functions/<key>/datasets/labeled`
    - **`experiment <key>` mode:** pass `/studio`
    - **`investigate [<key>]` mode:** pass `/studio`
 
-   ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudio.js" <initialPath> [agentSessionId]
-   ```
+   If no active Studio session exists, the command opens a new one and enters an event loop (stays running). Run it via your runtime's "long-running exec session" mechanism. If an active session already exists, it navigates and exits immediately.
 
-   `initialPath` is required. Always pass it explicitly, even when using the default `/studio`.
+   The script outputs JSON lines on stdout (see the Studio Lifecycle intro for the full event reference):
 
-   Run it via your runtime's "long-running exec session" mechanism.
+   - `{"event":"started","sessionId":"..."}` — new Studio opened. The session is written to disk; all subsequent `openStudioTo.js` and `pushActivity.js` calls resolve it automatically. You do not need to track the sessionId.
+   - `{"event":"navigated","sessionId":"...","path":"..."}` — navigated an existing session.
+   - `{"event":"auth-required","sessionId":"..."}` — user needs to sign in. Wait for `authenticated`.
+   - `{"event":"authenticated","sessionId":"..."}` — user signed in. Continue.
+   - `{"event":"session-ended","sessionId":"..."}` — user closed Studio. Process exits.
 
-   The script outputs JSON lines on stdout:
+   Status messages go to stderr. Filter to JSON lines only.
 
-   - `{"event":"started","sessionId":"..."}` on startup: capture the `sessionId` and hold it in working context for the rest of the flow. Every `navigateStudio.js` call in later phases uses it.
-   - `{"event":"auth-required","sessionId":"..."}` if the user is not signed in to Bitfab in their browser: tell the user to sign in to Bitfab in the Studio window that just opened, then wait for the `authenticated` event before continuing.
-   - `{"event":"authenticated","sessionId":"..."}` the user has signed in. Continue the flow.
-   - `{"event":"session-ended","sessionId":"..."}` if the user closes the Studio: the process exits. See the lifecycle note above.
-
-   Status messages (e.g. "Opening Studio: ...") go to stderr, not stdout. Filter to JSON lines only.
-
-   **Recovering after compaction:** If the Studio is already open from a prior context window but you've lost the `sessionId`, recover it:
-
-   ```bash
-   node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/recoverStudio.js" <agentSessionId>
-   ```
-
-   It prints `{"studioSessionId":"...","agentSessionId":"..."}`. Use `studioSessionId` for all subsequent `navigateStudio.js` and `pushActivity.js` calls. If it returns `{"error":"no-active-studio"}`, the Studio was never opened or has been closed; open a new one.
+   **Recovering after compaction:** Automatic. `openStudioTo.js` and `pushActivity.js` read the active-session file on disk.
 
 ## Phase 1: Identify the Trace Function
 
@@ -124,7 +117,7 @@ If any `navigateStudio.js` call outputs `{"event":"not-responding",...}`, the St
 
 If a `traceFunctionKey` was provided as an argument, skip the listing and the user prompt — but still cross-check the provided key against the local codebase before moving on. Otherwise, work through all four steps below:
 
-1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Identifying trace function"`.
+1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Identifying trace function"`.
 
    **Skip this step if a `traceFunctionKey` argument was provided** — use the argument directly and continue to cross-check. Otherwise, call `mcp__Bitfab__list_trace_functions` to list all available trace functions. Use **only** the keys and metadata returned (trace counts, last activity) — do NOT invent or infer descriptions of what each function does from its key name. Key names are often ambiguous or misleading, and guessing produces hallucinated descriptions that confuse the user.
 2. **Cross-check each key against the local codebase** before presenting. For each returned key, `grep` the repo for string-literal uses of that exact key (across `*.ts`, `*.tsx`, `*.py`, `*.rb`, `*.go`, `*.baml`). Mark each function in the presented list as:
@@ -140,7 +133,7 @@ If a `traceFunctionKey` was provided as an argument, skip the listing and the us
 
 Check that this trace function has both instrumentation and a replay script.
 
-1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Verifying instrumentation"`.
+1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Verifying instrumentation"`.
 
    Search the codebase for the trace function key to confirm SDK usage:
 
@@ -252,23 +245,21 @@ A **dataset** is the named bucket of labeled traces an experiment replays agains
 
 In `dataset` mode this phase is the entry point — Phase 1 (function picker) and Phase 2 (instrumentation/replay verification) are skipped, so the trace function key comes from the argument. Before calling any MCP tools, grep the codebase for the key (e.g. `grep -r "<traceFunctionKey>" --include="*.ts" --include="*.tsx" --include="*.py" --include="*.rb" --include="*.go" --include="*.baml"`) and note the file path — every later step ("Label them yourself", and Phase 4 "Read the code" in `all` mode) needs it.
 
-1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Building dataset"`.
+1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Building dataset"`.
 
    **Pick or create a dataset** — Call `mcp__Bitfab__list_datasets` with the trace function key. Then branch on whether any exist. Hold the chosen `datasetId` in working context — every step from here on uses it.
 
    - **no datasets exist for this function (list_datasets returned empty)** — **don't ask** — silently call `mcp__Bitfab__create_dataset` with `traceFunctionKey: <key>` and `name: <key>` (just the trace function key as the name; the user can rename it later in the UI if they want). Hold the returned `datasetId` and continue. The first-time user shouldn't have to answer a name prompt before they've even seen the dataset.
    - **one or more datasets already exist** — present them to the user as a numbered choice, with one option per existing dataset (name · id · current trace count) plus a "Create new" option. Recommend the most recently used dataset that has traces. If the user picks an existing dataset, hold its id and continue. If the user picks "Create new", silently call `mcp__Bitfab__create_dataset` with `name: "<key> #N"` where N is one more than the number of existing datasets (e.g. `eval-assistant #2`) — don't ask for a name. Hold the new id and continue.
-2. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Reviewing dataset"`.
+2. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Reviewing dataset"`.
 
-   Open the dataset review page for the user **immediately** after picking or creating the dataset. Use `navigateStudio.js` to route the already-open Studio to the dataset review page using the `sessionId` captured in the `studio/open` step:
+   Open the dataset review page for the user **immediately** after picking or creating the dataset. Use `openStudioTo.js` to route Studio to the dataset review page:
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/navigateStudio.js" <sessionId> "/studio/trace-functions/<functionKey>/datasets/<datasetId>"
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" "/studio/trace-functions/<functionKey>/datasets/<datasetId>"
    ```
 
-   The command sends a navigate event and exits immediately. The path must stay within the `/studio/` route tree so the Studio shell (header, session management) stays mounted. The `?session=` param is appended automatically by the shell's navigate handler.
-
-   If the Studio was closed early (`session-ended` event from the background process), skip the navigation call but still check the dataset.
+   The command navigates an existing session or opens a new one automatically.
 
    **After opening, check whether the dataset already has traces.** Call `mcp__Bitfab__search_traces` with `traceFunctionKey: <key>`, `datasetId: <datasetId>`, `limit: 1` to see if the dataset is populated.
 
@@ -310,7 +301,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - **C — Open-ended, you decide** — no hypothesis yet; you sample broadly across recent traces, look for diversity, and surface anything that looks like a candidate failure or interesting edge case
 
    Hold the user's answer (the chosen option **and** any free-text detail) in working context — the next step uses it to shape the `mcp__Bitfab__search_traces` filters and which traces to prioritise reading. If they pick C, default to recent + diverse + non-empty outputs.
-6. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Searching traces"`.
+6. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Searching traces"`.
 
    **Find unlabeled traces** — Search without label filters to find unlabeled traces for the trace function. **Shape the search by the intent captured in the previous step** (or by the prior dataset's existing labels, if any): Option A = filter to traces matching the user's described failure pattern; Option B = filter by the user, session, or time window of the reported incidents; Option C = default sweep (recent, diverse inputs, non-empty outputs). Use `mcp__Bitfab__search_traces` with the relevant filters, then `mcp__Bitfab__read_traces` with `scope: "summary"` to read candidates and identify which are worth labeling — look for diverse inputs, traces that produced output (not empty), and traces that cover different scenarios under the chosen intent. Filter out near-duplicates and uninteresting traces. If every trace is already labeled and attached to this dataset, you can move straight on with no new candidates.
 7. **Ask how the user wants to label** — Before any verdicts go on these candidate traces, ask the user how the user wants to label them. There are exactly two modes, and the answer determines whether you call `mcp__Bitfab__update_agent_labels` at all:
@@ -319,7 +310,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    > B) **I'll label them manually** — no agent verdicts; you label every trace from scratch in the labeling page
 
    Recommend Option A — an agent first pass turns the labeling page into a quick approve/edit review. But respect the user's choice: if they pick B, do **not** call `mcp__Bitfab__update_agent_labels` for any of these candidates. They want to label from scratch in the labeling page, with no agent verdicts pre-filled. If no new candidate traces were found in the previous step, skip this question and continue.
-8. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Labeling traces"`.
+8. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Labeling traces"`.
 
    **Agent first pass: label them yourself before opening the labeling page** — Reachable only when the user picked Option A in the previous step. **You** label the approved candidate traces so the labeling page becomes an approve/edit review instead of a blank labeling session. Call `mcp__Bitfab__read_traces` with `scope: "full"` on the approved trace IDs (batch them — up to 10 per call), read each trace's inputs / output / spans yourself, and decide for each one whether it looks like a PASS or a FAIL. **Ground your judgment in the codebase, not just the trace text.** Before you start labeling, read the instrumented function in the user's source (located in Phase 2 in `all` mode, or via the grep step in this phase's intro in `dataset` mode) and any nearby code that explains intent — comments, docstrings, README sections, related tests, BAML files — so you know what the function is *supposed* to do and what "good" looks like for it. Apply the same context to every trace: does this output achieve the function's goal as expressed in the code? Does it match the patterns in the already-validated traces? Then call `mcp__Bitfab__update_agent_labels` once with an array of `{ traceId, label, annotation }` objects — **both `label` (true for pass, false for fail) and `annotation` (a one-or-two-sentence explanation written for the human reviewer, ideally referencing what the code is trying to do) are required for every trace**. Commit to a verdict — if you genuinely cannot decide, you didn't read the trace or the code carefully enough. The labels you save here start unapproved; they only become part of the validated dataset once a human approves them in the labeling page.
 
@@ -329,23 +320,27 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 9. **Attach candidate traces to the dataset** — Call `mcp__Bitfab__add_traces_to_dataset` with the `datasetId` chosen earlier and the array of approved candidate trace IDs (in agent-first mode, the ones you just labeled; in manual mode, the candidates the user approved in find-unlabeled). The call is idempotent — re-adding traces already in the dataset is a no-op, so it's safe to include the full set. If no new candidate traces were approved (the dataset was already populated), skip this step.
 
    The dataset review page is already open in Studio (opened earlier in `open-page`). Each trace you attach streams in live via real-time events, so the user sees them appear instantly. After attaching, tell the user the dataset is populated and ready for their review, then proceed to `await-event`.
-10. **Wait for user to finish dataset review.** Use the **Monitor tool** to watch for the next JSON event from the Studio background process (`openStudio.js`, started in `studio/open`). The output file path was returned when you started the background process. Set up a monitor that tails only NEW lines (skip lines already read) and filters for JSON event lines:
+10. 🚨 **MANDATORY: Set up a Monitor IMMEDIATELY.** Do not skip this step or defer it. The user is reviewing traces in Studio right now and will click Done or Edit with agent. If you don't monitor, you will miss the event.
+
+   Use the **Monitor tool** to tail the Studio background process output for new JSON events:
 
    ```bash
    tail -f -n +<NEXT_LINE> <output-file> | grep -E --line-buffered '"event"'
    ```
 
-   Where `<NEXT_LINE>` is the line number after the last line you already processed (e.g. if you read line 1 with the `started` event, use `-n +2`). Track which line you last processed so you don't re-fire on old events.
+   `<output-file>` is the path returned when you started the `openStudioTo.js` background process. `<NEXT_LINE>` is one past the last line you read (e.g. if you read 5 lines, use `-n +6`).
 
-   The monitor will notify you when a new event arrives. Do NOT just read the output file once and wait, that will cause the flow to stall. The Studio process emits these events relevant to dataset review:
+   The Monitor streams ALL events from Studio. Route on the `event` field in each JSON line:
 
-   - `{"event":"edit-with-agent","sessionId":"...","datasetId":"..."}` — the user clicked **Edit with agent**. Go to the modify loop, then come back here.
-   - `{"event":"return-to-agent","sessionId":"..."}` — the user clicked **Done**, which triggered `returnToStudio()` and navigated back to `/studio`. Dataset review is complete.
-   - `{"event":"session-ended","sessionId":"..."}` — the user closed Studio entirely.
+   - `{"event":"return-to-agent",...}` — user clicked **Done**. Dataset review is complete.
+   - `{"event":"edit-with-agent",...,"datasetId":"..."}` — user clicked **Edit with agent**. Go to the modify loop, then come back here.
+   - `{"event":"session-ended",...}` — user closed Studio entirely.
+   - `{"event":"navigated",...}` — Studio navigated to a new page (informational).
+   - `{"event":"click",...}` / `{"event":"focus",...}` — user interaction events (used during template editing).
 
-   Filter to JSON lines only (skip status text). **Stay silent while waiting.** Do NOT print a narration line for each monitor notification (e.g. "The user selected trace X", "The user navigated back"). The user can already see the monitor stream. Only speak when you reach a branch point below or hit an error. Route on the `event` field:
+   **Stay silent while monitoring.** Do not narrate each event. Only speak when you reach a branch point or hit an error.
 
-   **Template editing during labeling.** The user may also ask to edit a template in chat while the Monitor is waiting (e.g. "change the LLM view", "edit the function template", "make the output less verbose"). This is NOT a Studio event; it arrives as a regular user message. If the user asks to edit a template, go to the edit-template-loop step. **Do NOT invoke `$bitfab:setup templates`** — that navigates Studio away from the dataset page and breaks the labeling flow. Template editing is handled inline here.
+   **Template editing during labeling.** The user may ask to edit a template in chat while the Monitor is running (e.g. "change the LLM view"). This arrives as a user message, not a Studio event. If so, go to the edit-template-loop step. **Do NOT invoke `$bitfab:setup templates`** — that navigates Studio away from the dataset page.
 
    - **`event: edit-with-agent`** — user clicked Edit with agent on the dataset page. Go to the modify loop, then come back here to read the next event
    - **`event: return-to-agent`** — user clicked Done on the dataset page. Dataset review is complete, move on to build + confirm the dataset
@@ -386,7 +381,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
 **Run only when mode is `all`, `dataset` or `investigate`.**
 
-1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Diagnosing failures"`.
+1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Diagnosing failures"`.
 
    **Understand failures.** Using the failed traces you read in Phase 3 (or read them now if you haven't):
 
@@ -431,11 +426,11 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
 Run an iterative improvement loop. Each iteration:
 
-The Studio is already open (launched in the `studio/open` step at the start of the flow). Use the `sessionId` captured there for all `navigateStudio.js` calls. If the Studio was closed early (`session-ended` event), skip navigation calls but continue the improve loop normally.
+`openStudioTo.js` resolves the active session automatically. No need to pass a sessionId.
 
 1. **Run only when mode is `experiment`.**
 
-   **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Running experiments"`.
+   **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Running experiments"`.
 
    The trace function key comes from the argument and no prior phase has run. Pick the dataset to iterate against, then locate the code:
 
@@ -494,7 +489,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    **2. Regenerate the replay script.** Invoke `$bitfab:setup replay` to regenerate the script with full flag support.
 
    **3. Re-check capabilities.** After regeneration, re-grep the script for all three capability flags (`code-change`/`code_change`, `experiment-group-id`/`experiment_group_id`, `traceId`/`trace_id`) and update the flags in working context. If any are still missing after both upgrades, note it but continue.
-5. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Making changes"`.
+5. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Making changes"`.
 
    **Make the change.**
 
@@ -502,7 +497,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - For every file you intend to edit in this experiment: **read the file with the Read tool first** and keep its full contents in working memory as the **before** snapshot. Then edit. Then **read the file again** to capture the **after** snapshot. Both snapshots are required by the next step (`replay-against-dataset`) so the experiment dashboard can render the literal edit alongside the results — this is per-experiment, not cumulative
    - Hold a one-line **change description** in working memory too (e.g. "fix off-by-one in retry logic", "tighten extraction prompt"). It will be the experiment's title in the viewer
    - If a file is newly created, the before snapshot is the empty string `""`. If a file is deleted, the after snapshot is `""`. The path is always the repo-relative file path — no `repo`, `commit`, or other context fields
-6. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Running replay"`.
+6. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Running replay"`.
 
    **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `all` and `dataset` modes, or rehydrated at the start of this phase in `experiment` mode).
 
@@ -525,13 +520,13 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
    **Check the `supportsExperimentGroups` flag** (from `detect-replay-capabilities`). If true, pass `--experiment-group-id <experimentGroupId>` so the test run is tagged with the group. The script forwards it into `client.replay()` as `experimentGroupId`. If false, skip the flag (the experiments page will still work via `testRunIds` fallback in `open-experiments`).
 
-   **Open the experiments page before running replay (if experiment groups are supported).** If `supportsExperimentGroups` is true AND the Studio is still open (the background process hasn't emitted `session-ended`), navigate it to the experiments page using the group ID:
+   **Open the experiments page before running replay (if experiment groups are supported).** If `supportsExperimentGroups` is true, navigate Studio to the experiments page using the group ID:
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/navigateStudio.js" <sessionId> "/studio/experiments?experimentGroupId=<experimentGroupId>"
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" "/studio/experiments?experimentGroupId=<experimentGroupId>"
    ```
 
-   This lets the user watch experiment results stream in live as the replay runs. If `supportsExperimentGroups` is false, skip this navigation (the `open-experiments` fallback will navigate with `testRunIds` after the replay completes). If the Studio was closed early, also skip this navigation.
+   This lets the user watch experiment results stream in live as the replay runs. If `supportsExperimentGroups` is false, skip this navigation (the `open-experiments` fallback will navigate with `testRunIds` after the replay completes).
 
    Run the replay with the trace IDs and whichever flags are supported (omit unsupported flags):
 
@@ -596,7 +591,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
    - **replay trace IDs are populated (`hasTraceIds` is true)** — the SDK and server support trace ID mapping. Open the experiments page in Studio first (so the user can watch verdicts populate in real time), then evaluate and persist labels
    - **replay trace IDs are null (`hasTraceIds` is false)** — tell the user: "Your SDK doesn't support replay trace IDs, so experiment results can't be persisted to Studio or compared across iterations. Upgrade your SDK and run `$bitfab:setup replay` to regenerate the script. Evaluating in-agent for now." Then proceed to text-only evaluation so the user still sees comparison results in-agent, without the Studio experiments page
-9. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
+9. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Evaluating results"`.
 
    **Evaluate results in-agent without persisting.** This path runs when replay trace IDs are unavailable (old SDK or server). The agent still compares original vs new outputs and derives pass/fail verdicts, but cannot persist them via `persistReplayLabels.js` or show them in Studio.
 
@@ -607,7 +602,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - Unreplayable items (`item.error` set) go in their own bucket.
 
    Hold the verdicts in working context for `share-results`. Since trace IDs are unavailable, do NOT attempt to run `persistReplayLabels.js` or open the experiments page.
-10. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
+10. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Evaluating results"`.
 
    **Evaluate against labels & annotations.** Score only items where `item.error` is unset. Items with `item.error` set are unreplayable (already classified) and go in their own bucket — never pass, fail, or regression.
 
@@ -657,13 +652,13 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
    If the experiments page was already opened via `experimentGroupId` in `replay-against-dataset` (`supportsExperimentGroups` is true), skip this step entirely, the page is already showing live results.
 
-   If `supportsExperimentGroups` is false, navigate the already-open Studio to the experiments page using the `sessionId` captured in the `studio/open` step. Build the path with **every** `testRunId` you've collected across iterations of this phase (comma-separated):
+   If `supportsExperimentGroups` is false, navigate Studio to the experiments page. Build the path with **every** `testRunId` you've collected across iterations of this phase (comma-separated):
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/navigateStudio.js" <sessionId> "/studio/experiments?testRunIds=<testRunId1>,<testRunId2>,<testRunId3>"
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" "/studio/experiments?testRunIds=<testRunId1>,<testRunId2>,<testRunId3>"
    ```
 
-   The command sends a navigate event and exits immediately. If the Studio was closed early (the background process exited with a `session-ended` event), skip this step entirely.
+   The command navigates an existing session or opens a new one automatically.
 13. **Share results to the user.**
 
    > "After N experiments these are the results: X/Y traces now pass (Z unreplayable, excluded from pass/fail).
@@ -689,7 +684,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
 ## Phase 6: Validate & Wrap Up
 
-1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> completed "Done"`.
+1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" completed "Done"`.
 
    **Summary.** Present the final results similar to this. You may expand where appropriate based on context from the user:
 
