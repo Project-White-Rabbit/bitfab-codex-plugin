@@ -17,12 +17,14 @@ Use the local plugin MCP tools (`mcp__Bitfab__list_trace_functions`, `mcp__Bitfa
 
 This skill has four invocation modes, each a different entry point into the same pipeline. All modes converge: once they reach the shared phases (dataset → diagnose → experiments → wrap up), they follow the same path to the end. The user can stop early at any decision point, but the default is to continue. Most sub-modes require the trace function key as the argument because they skip the function picker (Phase 1) and instrumentation/replay verification (Phase 2).
 
-| Invocation | Action |
-|---|---|
-| `$bitfab:assistant` or `$bitfab:assistant all` | Full flow: pick function → verify instrumentation → pick or create dataset → label → diagnose → iterate → wrap up |
-| `$bitfab:assistant investigate [<key>]` | Free-form investigation of an issue the user is describing. Read traces and code as needed to characterize the problem, then offer to stop with a summary, write a written analysis report, or roll into dataset building and continue through experiments. `<key>` is optional, the agent picks the function from what the user says when it isn't given |
-| `$bitfab:assistant dataset <key>` | Build or extend a labeled dataset for one function, then diagnose failures and iterate with experiments. Picks an existing dataset or creates a new one |
-| `$bitfab:assistant experiment <key> [<dataset-id>]` | Run experiments to fix failing traces against a labeled dataset, then wrap up. If `<dataset-id>` is omitted, you'll be asked to pick one. If the function has no datasets yet, run `$bitfab:assistant dataset <key>` first |
+| Mode | Invocation | Action |
+|---|---|---|
+| `all` | `$bitfab:assistant`, `$bitfab:assistant all [<key>]`, or `$bitfab:assistant <key>` | Full flow: pick function → verify instrumentation → pick or create dataset → label → diagnose → iterate → wrap up |
+| `investigate` | `$bitfab:assistant investigate [<key>]` | Free-form investigation of an issue the user is describing. Read traces and code as needed to characterize the problem, then offer to stop with a summary, write a written analysis report, or roll into dataset building and continue through experiments. `<key>` is optional, the agent picks the function from what the user says when it isn't given |
+| `dataset` | `$bitfab:assistant dataset <key>` | Build or extend a labeled dataset for one function, then diagnose failures and iterate with experiments. Picks an existing dataset or creates a new one |
+| `experiment` | `$bitfab:assistant experiment <key> [<dataset-id>]` | Run experiments to fix failing traces against a labeled dataset, then wrap up. If `<dataset-id>` is omitted, you'll be asked to pick one. If the function has no datasets yet, run `$bitfab:assistant dataset <key>` first |
+
+**Argument routing.** If the argument is free-form text (not a mode name or bare function key), infer the best mode and extract the trace function key if mentioned. Confirm your pick in one line before entering the flow (e.g. "Starting investigate for `generate-email`."). If you can't pick a single mode, ask as a numbered choice.
 
 In sub-modes that take a function key, grep the codebase for `<key>` early so labeling and experiments are grounded in the actual instrumented function (the full flow does this in Phase 2; sub-modes skip Phase 2 entirely). `investigate` mode does its own function lookup and code grep in Phase Investigate.
 
