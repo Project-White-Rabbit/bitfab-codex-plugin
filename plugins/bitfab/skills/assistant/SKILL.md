@@ -468,6 +468,8 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
    **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `all` mode, or rehydrated at the start of this phase in `experiment` mode).
 
+   **Generate an experiment group ID.** At the start of each iteration, generate a fresh UUID to use as the `experimentGroupId` for this batch. This groups all test runs from this iteration together so the experiments page can stream them in live.
+
    **Write the code-change payload first.** Before running the script, write a tmp JSON file (e.g. `/tmp/bitfab-code-change-<experimentN>.json`) using the snapshots captured in `make-change`:
 
    ```json
@@ -487,19 +489,29 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
    Then **continue the experiment without the flag** — omit `--code-change` from the invocation and skip writing the JSON file. The replay itself is unaffected; only the code-change metadata is missing from the experiment viewer.
 
-   If the script does support the flag, run the replay with the trace IDs and `--code-change` pointing at the JSON file. The script forwards `description` + `files` into `client.replay()` as `codeChangeDescription` / `code_change_description` and `codeChangeFiles` / `code_change_files`, so the experiment viewer can render the literal edit next to the pass/fail counts.
+   **Check `--experiment-group-id` support.** Grep the replay script for `experiment-group-id` or `experiment_group_id`. If the script supports it, pass `--experiment-group-id <experimentGroupId>` so the test run is tagged with the group. The script forwards it into `client.replay()` as `experimentGroupId`. If the script doesn't support it, skip the flag (the experiments page will still work via `testRunIds` fallback in `open-experiments`).
+
+   **Open the experiments page before running replay (if group ID is supported).** If the replay script supports `--experiment-group-id` AND the Studio is still open (the background process hasn't emitted `session-ended`), navigate it to the experiments page using the group ID:
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/navigateStudio.js" <sessionId> "/studio/experiments?experimentGroupId=<experimentGroupId>"
+   ```
+
+   This lets the user watch experiment results stream in live as the replay runs. If the script doesn't support the flag, skip this navigation (the `open-experiments` fallback will navigate with `testRunIds` after the replay completes). If the Studio was closed early, also skip this navigation.
+
+   If the script does support the flag, run the replay with the trace IDs, `--code-change`, and `--experiment-group-id`:
 
    ```bash
    # The exact command depends on the replay script — adapt to what exists
-   # Example for TypeScript (with code-change support):
+   # Example for TypeScript (with all flags):
+   cd <project-dir> && npx tsx scripts/replay.ts <pipeline-name> --trace-ids <id1>,<id2>,<id3>,... --code-change /tmp/bitfab-code-change-<experimentN>.json --experiment-group-id <experimentGroupId>
+   # Without experiment-group-id support (older scripts):
    cd <project-dir> && npx tsx scripts/replay.ts <pipeline-name> --trace-ids <id1>,<id2>,<id3>,... --code-change /tmp/bitfab-code-change-<experimentN>.json
-   # Without code-change support (older scripts):
-   cd <project-dir> && npx tsx scripts/replay.ts <pipeline-name> --trace-ids <id1>,<id2>,<id3>,...
    ```
 
    **Before running: verify the replay script prints the full original and new output values AND the replay trace ID (`item.traceId`) to stdout for every item** (not just lengths, counts, hashes, or truncated previews). If it doesn't, fix the script first — the Replay Output Contract and example script live in the SDK reference at `https://docs.bitfab.ai/<language>-sdk#replay`. Subagents can't evaluate an improvement from `5 → 7 (+2)`, and missing trace IDs block verdict persistence.
 
-   **Capture the `testRunId` from the replay output** — the SDK prints it (alongside `testRunUrl`) when the run completes. Track every `testRunId` produced across all iterations of this phase: you'll feed them to `open-experiments` so the user can review every experiment side-by-side in one viewer.
+   **Capture the `testRunId` from the replay output** — the SDK prints it (alongside `testRunUrl`) when the run completes. Track every `testRunId` produced across all iterations of this phase for the `open-experiments` fallback.
 
    **If a child span fails during replay, tag it with `mockOnReplay` instead of debugging it.** When a non-root span throws (missing API key for a paid call, flaky external service, deleted/moved dependency, env not reproducible), it usually blocks the whole trace from completing, even though the failure is environmental, not a bug in the function you're iterating on. The short-term fix is to mark that span as replayable from its recorded output:
 
@@ -607,17 +619,17 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - **`status: "missing-coverage"` (script returned a non-empty `missingTraceIds` array)** — you under-verdicted. Read the missing replay trace IDs (use `mcp__Bitfab__read_traces` with `scope: "summary"` or `"full"` if you didn't already), decide each one (PASS / FAIL with annotation, or `skip: true` if genuinely ambiguous), write a NEW verdicts file at the same path covering ALL the originally expected IDs (the script needs the full `expectedTraceIds` list each call, not just the gaps), and re-run the script. Loop back here with the new result
    - **`status: "invalid-input"` (malformed verdicts JSON or missing fields)** — the verdicts file you wrote doesn't match the schema. Read the script's `message` field, fix the JSON (most common: missing annotation on a non-skip entry, missing traceId, expectedTraceIds empty), and re-run the script. Loop back here
    - **`status: "mcp-error"` (MCP call to update_agent_labels failed mid-batch)** — network or auth error. The script's `partialTraceIds` lists which IDs were already persisted. Tell the user, recommend re-running the script (it's idempotent — already-persisted labels just upsert), and loop back here. If it keeps failing, stop and surface the error
-10. **Open experiment viewer.** This step only runs when replay trace IDs are available (routed here from `check-trace-id-support`). If no `testRunId`s were captured, skip this step and continue to evaluate.
+10. **Open experiment viewer (fallback).** This step only runs when replay trace IDs are available (routed here from `check-trace-id-support`). If no `testRunId`s were captured, skip this step and continue to evaluate.
 
-   Navigate the already-open Studio to the experiments page using the `sessionId` captured in the `studio/open` step. Build the path with **every** `testRunId` you've collected across iterations of this phase (comma-separated):
+   If the experiments page was already opened via `experimentGroupId` in `replay-against-dataset` (the replay script supported `--experiment-group-id`), skip this step entirely, the page is already showing live results.
+
+   If the replay script did NOT support `--experiment-group-id`, navigate the already-open Studio to the experiments page using the `sessionId` captured in the `studio/open` step. Build the path with **every** `testRunId` you've collected across iterations of this phase (comma-separated):
 
    ```bash
    node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/navigateStudio.js" <sessionId> "/studio/experiments?testRunIds=<testRunId1>,<testRunId2>,<testRunId3>"
    ```
 
    The command sends a navigate event and exits immediately. If the Studio was closed early (the background process exited with a `session-ended` event), skip this step entirely.
-
-   The experiments page is opened before evaluation so the user can watch verdicts populate in real time as the agent persists labels in the next step.
 11. **Share results to the user.**
 
    > "After N experiments these are the results: X/Y traces now pass (Z unreplayable, excluded from pass/fail).
