@@ -49,6 +49,7 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 | `openStudioTo.js <path> [agentSessionId]` | Navigate an existing Studio session or open a new one at the given path |
 | `pushActivity.js {action} "{displayName}"` | Emit activity events to the Studio sidebar |
 | `persistReplayLabels.js <verdicts-file>` | Persist replay verdicts from a JSON file to Bitfab via MCP |
+| `closeStudio.js <sessionId>` | Close the Studio browser tab for an agent session |
 
 ## Phase 0: Status + Update Check
 
@@ -766,3 +767,13 @@ Run an iterative improvement loop. Each iteration:
    Kill the Studio background process (send SIGINT or abort the background task).
 
    If `Z > 0`, add one line naming the infra cause (e.g. "Z traces unreplayable — missing DB rows; refresh the dataset or scope to a snapshot next pass") so the user has a next step beyond the code.
+
+## Cleanup
+
+1. If a Studio session was opened at any point during this flow (any command that emitted a `{"event":"session-ready","sessionId":"<uuid>"}` JSONL line), close it now:
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/closeStudio.js" <sessionId>
+   ```
+
+   If no Studio session was opened during this flow, skip this step.

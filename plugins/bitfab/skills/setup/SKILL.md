@@ -66,6 +66,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 | `openTracePlan.js <planId>` | Open the trace plan confirmation UI in Studio (blocks until user confirms or cancels) |
 | `waitForTrace.js <trace-function-key>` | Poll for the first trace to arrive (blocks up to ~10 min) |
 | `startTemplatePreview.js <functionKey>` | Open the template editor preview in Studio (blocks until user clicks Done) |
+| `closeStudio.js <sessionId>` | Close the Studio browser tab for an agent session |
 
 ## Preamble
 
@@ -552,6 +553,16 @@ Templates control how a span's input / output renders in the Bitfab UI. They are
    - **background process exited (user clicked Close)** — exit the loop and acknowledge that template editing is done
    - **user explicitly says they're done** — exit the loop and acknowledge
    - **user wants another change** — loop back and apply the next edit
+
+## Cleanup
+
+1. If a Studio session was opened at any point during this flow (any command that emitted a `{"event":"session-ready","sessionId":"<uuid>"}` JSONL line), close it now:
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/closeStudio.js" <sessionId>
+   ```
+
+   If no Studio session was opened during this flow, skip this step.
 
 ## Refactor confirmation (applies to Instrument step 8 and Replay step 5)
 
