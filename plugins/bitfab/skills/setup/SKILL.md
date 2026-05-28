@@ -303,10 +303,10 @@ Bitfab captures every AI function call — inputs, outputs, and errors — so yo
 
    **Polling (mandatory — see the Blocking-process rule at the top of this skill):** keep polling the live exec session until the process exits. Do NOT wait for a chat message from the user; their confirmation arrives as stdout on the already-running process, not as a new prompt. Poll every few seconds until one of these terminal conditions, then route accordingly:
 
-   - On exit, parse the final stdout line:
-     - `Trace plan confirmed [via …]` — the user confirmed in the browser. Call `mcp__Bitfab__get_trace_plan` with the plan id to read the authoritative `capturedNodeIds` for step 11. If it differs from your initial recommendation, prune `[auto]` lines whose ancestor manual span was uncaptured, and drop manual `●` wraps that aren't in the set.
-     - `Trace plan cancelled [via …]` — the user aborted from the browser. Tell them the trace setup was dropped and ask what they'd like to do instead. Do not write instrumentation.
-     - non-zero exit / timeout — surface the error to the user. Do not write instrumentation.
+   - The script emits JSONL to stdout. The first line is `{"event":"session-ready","sessionId":"<uuid>"}` once the Studio session is established. On exit, parse the final JSON line:
+     - `{"event":"confirmed","planId":"<uuid>"}` — the user confirmed in the browser. The `planId` may differ from the original if a mid-session `create_trace_plan` call created a new plan (the script auto-tracks the latest plan via `tracePlan:created` events). Call `mcp__Bitfab__get_trace_plan` with the returned `planId` to read the authoritative `capturedNodeIds` for step 11. If it differs from your initial recommendation, prune `[auto]` lines whose ancestor manual span was uncaptured, and drop manual `●` wraps that aren't in the set.
+     - `{"event":"cancelled","planId":"<uuid>"}` — the user aborted from the browser. Tell them the trace setup was dropped and ask what they'd like to do instead. Do not write instrumentation.
+     - non-zero exit (including `{"event":"timeout",...}`) — surface the error to the user. Do not write instrumentation.
 
    **Inline fallback** (use only if `mcp__Bitfab__create_trace_plan` errors, e.g. offline or MCP unreachable): present the trace plan **using the format defined in the "Trace Plan Format" reference section below** (legend → grammar → template precedence → canonical example). **STOP** — ask the user to confirm before writing code.
 11. **Write instrumentation AND the replay pipeline for this trace function in the same cycle — batched into a single message of tool calls.** Instrumentation edits go in one apply_patch / set of Edit calls; the replay script (new or updated `scripts/replay.*`) goes in the same turn. Skip the replay script entirely for Go-only projects (Go does not support replay).
@@ -391,10 +391,10 @@ Every Modify cycle targets **exactly one** trace function. Never batch multiple 
 
    **Polling (mandatory — see the Blocking-process rule at the top of this skill):** keep polling the live exec session until the process exits. Do NOT wait for a chat message from the user; their confirmation arrives as stdout on the already-running process, not as a new prompt. Poll every few seconds until one of these terminal conditions, then route accordingly:
 
-   3. **On exit, route by the final stdout line:**
-      - `Trace plan confirmed [via …]` — call `mcp__Bitfab__get_trace_plan` with `{ planId }` to read the authoritative `capturedNodeIds` (the user may have toggled `pure` context nodes into the captured set or removed previously-captured nodes in the UI). Reconcile your edit plan with what's now in `capturedNodeIds` — drop manual `●` wraps no longer captured, add wraps for any newly captured nodes — then take branch **A** (Proceed).
-      - `Trace plan cancelled [via …]` — the user cancelled from the browser. Take branch **C** (Modifications) — ask the user: what do they want to change? Their answer feeds back into step 4.
-      - non-zero exit / timeout — surface the error to the user, then fall back to the inline AskUserQuestion below.
+   3. **On exit, parse the final JSONL line and route:**
+      - `{"event":"confirmed","planId":"<uuid>"}` — call `mcp__Bitfab__get_trace_plan` with the returned `planId` (which may differ from the original if a mid-session `create_trace_plan` created a new plan; `openTracePlan.js` auto-tracks the latest plan via `tracePlan:created` events) to read the authoritative `capturedNodeIds` (the user may have toggled `pure` context nodes into the captured set or removed previously-captured nodes in the UI). Reconcile your edit plan with what's now in `capturedNodeIds` — drop manual `●` wraps no longer captured, add wraps for any newly captured nodes — then take branch **A** (Proceed).
+      - `{"event":"cancelled","planId":"<uuid>"}` — the user cancelled from the browser. Take branch **C** (Modifications) — ask the user: what do they want to change? Their answer feeds back into step 4. When the loop re-runs `openTracePlan.js` with the new plan, the script reuses the existing Studio browser tab automatically.
+      - non-zero exit (including `{"event":"timeout",...}`) — surface the error to the user, then fall back to the inline AskUserQuestion below.
 
    **Inline fallback** (use only if `mcp__Bitfab__create_trace_plan` errors, e.g. offline or MCP unreachable, or `openTracePlan.js` exits non-zero): present an inline before/after diff using the Default view template from the **Trace Plan Format** reference section, list `Files changed:` (paths only, no annotations), and **STOP** — ask the user:
 
@@ -432,7 +432,7 @@ Every View invocation targets **exactly one** trace function. The browser UI's C
    node "${BITFAB_PLUGIN_DIR}/dist/commands/openTracePlan.js" <planId>
    ```
 
-   (`${BITFAB_PLUGIN_DIR}` resolves to the plugin directory; `<planId>` is the id parsed from step 3.) The script navigates Studio to the trace plan page and **blocks** until the user closes Studio or clicks Confirm/Cancel (up to 30 minutes). View is read-only; whichever button the user clicks, do **not** apply edits or call `mcp__Bitfab__get_trace_plan` again. When the process exits, report that the plan was viewed and stop.
+   (`${BITFAB_PLUGIN_DIR}` resolves to the plugin directory; `<planId>` is the id parsed from step 3.) The script emits JSONL to stdout. The first line is `{"event":"session-ready","sessionId":"<uuid>"}`. The script navigates Studio to the trace plan page and **blocks** until the user closes Studio or clicks Confirm/Cancel (up to 30 minutes). View is read-only; whichever button the user clicks (the final JSONL line will be `{"event":"confirmed",...}` or `{"event":"cancelled",...}`), do **not** apply edits or call `mcp__Bitfab__get_trace_plan` again. When the process exits, report that the plan was viewed and stop.
 
    **Polling (mandatory — see the Blocking-process rule at the top of this skill):** keep polling the live exec session until the process exits. Do NOT wait for a chat message from the user; their dismissal arrives as stdout on the already-running process, not as a new prompt.
 
