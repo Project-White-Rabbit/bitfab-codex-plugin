@@ -456,7 +456,45 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
    - **(unreachable on this editor)** — **Parallel mode.** For each independent experiment, fork to a subagent using the Agent tool with `isolation: "worktree"` and `subagent_type: "general-purpose"`. The subagent edits its worktree, runs replay, returns its scored items + `testRunId` to this main agent
    - **always** — **Serial mode.** Iterate experiments one at a time in this main agent. Subagent worktrees wouldn't inherit bypass permissions, so their Edit tool would be denied
-3. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Making changes"`.
+3. **Detect replay script capabilities.** Before starting experiments, check what the replay script supports. These flags determine how experiment results are tracked and displayed. **If you already ran this step earlier in this session, skip it and continue to `make-change`.**
+
+   **1. Locate the replay script** (you found it in Phase 2 in `all` mode, or grep for `scripts/replay.*` / files importing `bitfab.replay` / `client.replay` now).
+
+   **2. Grep the replay script for three capabilities:**
+
+   | Grep for | Flag | What it enables |
+   |----------|------|-----------------|
+   | `code-change` or `code_change` | `supportsCodeChanges` | Code diffs attached to each experiment in the dashboard |
+   | `experiment-group-id` or `experiment_group_id` | `supportsExperimentGroups` | Live streaming of results in Studio as replay runs |
+   | `traceId` or `trace_id` in the output/print section | `supportsReplayTraceIds` (tentative, confirmed post-replay) | Verdict persistence, cross-iteration comparison, Studio experiments page |
+
+   **3. Route on the result.**
+
+   If all three flags are true, skip the question and continue silently.
+
+   If one or more flags are false, tell the user which capabilities are missing and what they affect, then ask the user. List the missing capabilities in the question text:
+
+   > "Your replay script is missing support for:
+   >
+   > [if !supportsCodeChanges] **Code changes**: edits won't appear in the experiment dashboard
+   > [if !supportsExperimentGroups] **Experiment groups**: no live streaming; results appear in Studio after each run
+   > [if !supportsReplayTraceIds] **Replay trace IDs**: experiment results can't be persisted or compared across iterations"
+
+   > A) **Upgrade the replay script** — regenerate the script with full support, then continue *(recommended)*
+   > B) **Continue without** — run experiments with the current script; missing features are skipped
+4. **Upgrade the SDK and replay script.** The replay script references SDK APIs (`experimentGroupId`, `codeChangeDescription`, per-item `traceId`) that require a recent SDK. Upgrade the SDK first, then regenerate the script.
+
+   **1. Upgrade the SDK.** Read the resolved version from the lockfile (`pnpm-lock.yaml`, `poetry.lock`, `uv.lock`, `Gemfile.lock`) and compare against the latest. If outdated, run the package manager's update command:
+   - TypeScript: `pnpm update @bitfab/sdk` (in monorepos, scope with `--filter <pkg>`)
+   - Python: `uv lock --upgrade-package bitfab-py && uv sync` or `poetry update bitfab-py`
+   - Ruby: `bundle update bitfab --conservative`
+
+   If the SDK is on a legacy package name (e.g. `bitfab` instead of `@bitfab/sdk`), remove the old package and install the new one. Skip this step if the SDK is already at the latest version.
+
+   **2. Regenerate the replay script.** Invoke `$bitfab:setup replay` to regenerate the script with full flag support.
+
+   **3. Re-check capabilities.** After regeneration, re-grep the script for all three capability flags (`code-change`/`code_change`, `experiment-group-id`/`experiment_group_id`, `traceId`/`trace_id`) and update the flags in working context. If any are still missing after both upgrades, note it but continue.
+5. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Making changes"`.
 
    **Make the change.**
 
@@ -464,7 +502,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - For every file you intend to edit in this experiment: **read the file with the Read tool first** and keep its full contents in working memory as the **before** snapshot. Then edit. Then **read the file again** to capture the **after** snapshot. Both snapshots are required by the next step (`replay-against-dataset`) so the experiment dashboard can render the literal edit alongside the results — this is per-experiment, not cumulative
    - Hold a one-line **change description** in working memory too (e.g. "fix off-by-one in retry logic", "tighten extraction prompt"). It will be the experiment's title in the viewer
    - If a file is newly created, the before snapshot is the empty string `""`. If a file is deleted, the after snapshot is `""`. The path is always the repo-relative file path — no `repo`, `commit`, or other context fields
-4. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Running replay"`.
+6. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Running replay"`.
 
    **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `all` and `dataset` modes, or rehydrated at the start of this phase in `experiment` mode).
 
@@ -483,23 +521,19 @@ The Studio is already open (launched in the `studio/open` step at the start of t
 
    The schema is flat — every file object is exactly `{ path, before, after }`. Do **not** add `repo`, `commit`, or any other context fields; `path` is the sole identifier. Use `""` for newly created or deleted files. One JSON file per experiment — never reuse last iteration's payload.
 
-   **Before writing the JSON, check whether the replay script supports `--code-change`.** Grep the script for `code-change` or `code_change`. If neither appears, the script predates this feature and will silently ignore the flag (most arg parsers drop unknown flags without erroring). In that case, warn the user:
+   **Check the `supportsCodeChanges` flag** (from `detect-replay-capabilities`). If false, skip writing the code-change JSON file and omit `--code-change` from the invocation. The replay itself is unaffected; only the code-change metadata is missing from the experiment viewer.
 
-   > "Your replay script doesn't support `--code-change` yet, so this experiment's code edit won't appear in the dashboard. Run `$bitfab:setup replay` after this session to regenerate the script with the flag."
+   **Check the `supportsExperimentGroups` flag** (from `detect-replay-capabilities`). If true, pass `--experiment-group-id <experimentGroupId>` so the test run is tagged with the group. The script forwards it into `client.replay()` as `experimentGroupId`. If false, skip the flag (the experiments page will still work via `testRunIds` fallback in `open-experiments`).
 
-   Then **continue the experiment without the flag** — omit `--code-change` from the invocation and skip writing the JSON file. The replay itself is unaffected; only the code-change metadata is missing from the experiment viewer.
-
-   **Check `--experiment-group-id` support.** Grep the replay script for `experiment-group-id` or `experiment_group_id`. If the script supports it, pass `--experiment-group-id <experimentGroupId>` so the test run is tagged with the group. The script forwards it into `client.replay()` as `experimentGroupId`. If the script doesn't support it, skip the flag (the experiments page will still work via `testRunIds` fallback in `open-experiments`).
-
-   **Open the experiments page before running replay (if group ID is supported).** If the replay script supports `--experiment-group-id` AND the Studio is still open (the background process hasn't emitted `session-ended`), navigate it to the experiments page using the group ID:
+   **Open the experiments page before running replay (if experiment groups are supported).** If `supportsExperimentGroups` is true AND the Studio is still open (the background process hasn't emitted `session-ended`), navigate it to the experiments page using the group ID:
 
    ```bash
    node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/navigateStudio.js" <sessionId> "/studio/experiments?experimentGroupId=<experimentGroupId>"
    ```
 
-   This lets the user watch experiment results stream in live as the replay runs. If the script doesn't support the flag, skip this navigation (the `open-experiments` fallback will navigate with `testRunIds` after the replay completes). If the Studio was closed early, also skip this navigation.
+   This lets the user watch experiment results stream in live as the replay runs. If `supportsExperimentGroups` is false, skip this navigation (the `open-experiments` fallback will navigate with `testRunIds` after the replay completes). If the Studio was closed early, also skip this navigation.
 
-   If the script does support the flag, run the replay with the trace IDs, `--code-change`, and `--experiment-group-id`:
+   Run the replay with the trace IDs and whichever flags are supported (omit unsupported flags):
 
    ```bash
    # The exact command depends on the replay script — adapt to what exists
@@ -543,7 +577,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - `total` — `result.items.length`; `0` or non-zero exit code = whole-replay crash
 
    If `completed === 0`, do not score pass/fail on an empty set — branch to `check-replay-health`.
-5. **Route on the counts and exit code.** Goal: keep infra noise out of evaluation. Read a sample of `item.error` strings (and stderr on crash) first to identify the DB-shaped pattern (missing record, FK / unique constraint, write rejected, connection refused, missing env).
+7. **Route on the counts and exit code.** Goal: keep infra noise out of evaluation. Read a sample of `item.error` strings (and stderr on crash) first to identify the DB-shaped pattern (missing record, FK / unique constraint, write rejected, connection refused, missing env).
 
    **🚨 Do not silently work around DB issues.** Do not drop affected trace IDs, stub the read in the script, gate writes behind a script-only flag, wrap the function in a rollback transaction, or edit the instrumented function to skip DB calls. Those all hide infra problems as fake passing or fake failing results and corrupt the experiment.
 
@@ -558,11 +592,11 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - **every item errored (completed is 0 but total is non-zero)** — systemic infra failure (usually env mismatch). Diagnose, confirm a script fix with the user, loop back
    - **high infra error rate (over half of items errored)** — signal is noisy. Flag the rate and ask the user whether to fix the env and retry, or proceed with the partial signal
    - **healthy or mixed run (at least one completed item, infra errors at most half of total)** — proceed. Carry `infraErrored` forward — surface as its own bucket in share-results, never folded into pass/fail
-6. **Route on whether replay trace IDs are available.** Check the `hasTraceIds` flag from `replay-against-dataset`. This determines whether verdicts can be persisted to the server and whether the experiments page in Studio will show meaningful results.
+8. **Route on whether replay trace IDs are available.** Check the `hasTraceIds` flag from `replay-against-dataset` (this confirms the tentative `supportsReplayTraceIds` flag from `detect-replay-capabilities`). This determines whether verdicts can be persisted to the server and whether the experiments page in Studio will show meaningful results.
 
    - **replay trace IDs are populated (`hasTraceIds` is true)** — the SDK and server support trace ID mapping. Open the experiments page in Studio first (so the user can watch verdicts populate in real time), then evaluate and persist labels
-   - **replay trace IDs are null (`hasTraceIds` is false)** — tell the user: "Your Bitfab SDK or replay script needs to be updated to support replay trace IDs. Update to @bitfab/sdk 0.13.5+ and ensure your server's completeReplay endpoint returns the traceIds mapping. Without this, experiment results can't be persisted to Studio." Then proceed to text-only evaluation so the user still sees comparison results in-agent
-7. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
+   - **replay trace IDs are null (`hasTraceIds` is false)** — tell the user: "Your SDK doesn't support replay trace IDs, so experiment results can't be persisted to Studio or compared across iterations. Upgrade your SDK and run `$bitfab:setup replay` to regenerate the script. Evaluating in-agent for now." Then proceed to text-only evaluation so the user still sees comparison results in-agent, without the Studio experiments page
+9. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
 
    **Evaluate results in-agent without persisting.** This path runs when replay trace IDs are unavailable (old SDK or server). The agent still compares original vs new outputs and derives pass/fail verdicts, but cannot persist them via `persistReplayLabels.js` or show them in Studio.
 
@@ -573,7 +607,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - Unreplayable items (`item.error` set) go in their own bucket.
 
    Hold the verdicts in working context for `share-results`. Since trace IDs are unavailable, do NOT attempt to run `persistReplayLabels.js` or open the experiments page.
-8. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
+10. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Evaluating results"`.
 
    **Evaluate against labels & annotations.** Score only items where `item.error` is unset. Items with `item.error` set are unreplayable (already classified) and go in their own bucket — never pass, fail, or regression.
 
@@ -613,24 +647,24 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    4. Read its single JSON line on stdout. Hold the parsed result for the next step.
 
    **Spill working notes to a separate tmp file if context gets big.** Don't conflate working notes with the verdicts file — the script deletes the verdicts file on success.
-9. **Verify replay labels persisted.** Route on the `status` field of the JSON the script printed in `evaluate-results`. The script is the deterministic gate — if it didn't return `ok`, the agent's verdicts are NOT yet on the replay traces and the experiment delta will be wrong on the next iteration.
+11. **Verify replay labels persisted.** Route on the `status` field of the JSON the script printed in `evaluate-results`. The script is the deterministic gate — if it didn't return `ok`, the agent's verdicts are NOT yet on the replay traces and the experiment delta will be wrong on the next iteration.
 
    - **`status: "ok"` (every replay trace has a verdict or explicit skip persisted)** — labels are persisted on the replay traces and the verdicts file is gone. Continue to share-results (experiments page was already opened before evaluation)
    - **`status: "missing-coverage"` (script returned a non-empty `missingTraceIds` array)** — you under-verdicted. Read the missing replay trace IDs (use `mcp__Bitfab__read_traces` with `scope: "summary"` or `"full"` if you didn't already), decide each one (PASS / FAIL with annotation, or `skip: true` if genuinely ambiguous), write a NEW verdicts file at the same path covering ALL the originally expected IDs (the script needs the full `expectedTraceIds` list each call, not just the gaps), and re-run the script. Loop back here with the new result
    - **`status: "invalid-input"` (malformed verdicts JSON or missing fields)** — the verdicts file you wrote doesn't match the schema. Read the script's `message` field, fix the JSON (most common: missing annotation on a non-skip entry, missing traceId, expectedTraceIds empty), and re-run the script. Loop back here
    - **`status: "mcp-error"` (MCP call to update_agent_labels failed mid-batch)** — network or auth error. The script's `partialTraceIds` lists which IDs were already persisted. Tell the user, recommend re-running the script (it's idempotent — already-persisted labels just upsert), and loop back here. If it keeps failing, stop and surface the error
-10. **Open experiment viewer (fallback).** This step only runs when replay trace IDs are available (routed here from `check-trace-id-support`). If no `testRunId`s were captured, skip this step and continue to evaluate.
+12. **Open experiment viewer (fallback).** This step only runs when replay trace IDs are available (routed here from `check-trace-id-support`). If no `testRunId`s were captured, skip this step and continue to evaluate.
 
-   If the experiments page was already opened via `experimentGroupId` in `replay-against-dataset` (the replay script supported `--experiment-group-id`), skip this step entirely, the page is already showing live results.
+   If the experiments page was already opened via `experimentGroupId` in `replay-against-dataset` (`supportsExperimentGroups` is true), skip this step entirely, the page is already showing live results.
 
-   If the replay script did NOT support `--experiment-group-id`, navigate the already-open Studio to the experiments page using the `sessionId` captured in the `studio/open` step. Build the path with **every** `testRunId` you've collected across iterations of this phase (comma-separated):
+   If `supportsExperimentGroups` is false, navigate the already-open Studio to the experiments page using the `sessionId` captured in the `studio/open` step. Build the path with **every** `testRunId` you've collected across iterations of this phase (comma-separated):
 
    ```bash
    node "${BITFAB_PLUGIN_DIR}/node_modules/bitfab-plugin-lib/dist/commands/navigateStudio.js" <sessionId> "/studio/experiments?testRunIds=<testRunId1>,<testRunId2>,<testRunId3>"
    ```
 
    The command sends a navigate event and exits immediately. If the Studio was closed early (the background process exited with a `session-ended` event), skip this step entirely.
-11. **Share results to the user.**
+13. **Share results to the user.**
 
    > "After N experiments these are the results: X/Y traces now pass (Z unreplayable, excluded from pass/fail).
    >
