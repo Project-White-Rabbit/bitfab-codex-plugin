@@ -466,7 +466,7 @@ The Studio is already open (launched in the `studio/open` step at the start of t
    - If a file is newly created, the before snapshot is the empty string `""`. If a file is deleted, the after snapshot is `""`. The path is always the repo-relative file path — no `repo`, `commit`, or other context fields
 4. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" <sessionId> started "Running replay"`.
 
-   **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `all` mode, or rehydrated at the start of this phase in `experiment` mode).
+   **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `all` and `dataset` modes, or rehydrated at the start of this phase in `experiment` mode).
 
    **Generate an experiment group ID.** At the start of each iteration, generate a fresh UUID to use as the `experimentGroupId` for this batch. This groups all test runs from this iteration together so the experiments page can stream them in live.
 
