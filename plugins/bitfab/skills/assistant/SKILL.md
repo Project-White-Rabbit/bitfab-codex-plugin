@@ -510,7 +510,14 @@ Run an iterative improvement loop. Each iteration:
    | `experiment-group-id` or `experiment_group_id` | `supportsExperimentGroups` | Live streaming of results in Studio as replay runs |
    | `traceId` or `trace_id` in the output/print section | `supportsReplayTraceIds` (tentative, confirmed post-replay) | Verdict persistence, cross-iteration comparison, Studio experiments page |
 
-   **3. Route on the result.**
+   **3. Verify the installed SDK actually supports the detected flags.** The replay script may accept flags that the installed SDK silently ignores. Check the actual SDK dist (not the script) for each capability:
+   - For `supportsExperimentGroups`: grep the installed SDK's replay JS file (e.g. `node_modules/.pnpm/@bitfab+sdk@*/node_modules/@bitfab/sdk/dist/replay-*.js`) for `experimentGroupId`. If absent, the SDK drops the option silently.
+   - For `supportsCodeChanges`: grep the same file for `codeChangeDescription` or `code_change_description`.
+   - For `supportsReplayTraceIds`: confirmed post-replay from actual output, not from the SDK dist.
+
+   If the replay script has a flag but the installed SDK does not support it, mark that flag as **false**. Prioritize upgrading the SDK over using fallbacks.
+
+   **4. Route on the result.**
 
    If all three flags are true, skip the question and continue silently.
 
@@ -535,8 +542,19 @@ Run an iterative improvement loop. Each iteration:
 
    **2. Regenerate the replay script.** Invoke `$bitfab:setup replay` to regenerate the script with full flag support.
 
-   **3. Re-check capabilities.** After regeneration, re-grep the script for all three capability flags (`code-change`/`code_change`, `experiment-group-id`/`experiment_group_id`, `traceId`/`trace_id`) and update the flags in working context. If any are still missing after both upgrades, note it but continue.
-5. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Making changes"`.
+   **3. Re-check capabilities.** After regeneration, re-grep the **installed SDK dist** (not just the script) for all three capability flags and update the flags in working context. If any are still missing after both upgrades, note it but continue.
+5. **Generate the experiment group ID and open the experiments page before making changes or running replay.** This lets the user watch results stream in live from the moment replay starts.
+
+   **Generate an experiment group ID.** Generate a fresh UUID to use as the `experimentGroupId` for this iteration. This groups all test runs from this iteration together so the experiments page can stream results live as the replay runs.
+
+   **Open the experiments page (if experiment groups are supported).** If `supportsExperimentGroups` is true, navigate Studio to the experiments page using the group ID:
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" "/studio/experiments?experimentGroupId=<experimentGroupId>"
+   ```
+
+   This is a navigation call, not a long-running process. The existing Studio session handles it. If `supportsExperimentGroups` is false, skip this navigation (the `open-experiments` fallback will navigate with `testRunIds` after the replay completes).
+6. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Making changes"`.
 
    **Make the change.**
 
@@ -544,11 +562,9 @@ Run an iterative improvement loop. Each iteration:
    - For every file you intend to edit in this experiment: **read the file with the Read tool first** and keep its full contents in working memory as the **before** snapshot. Then edit. Then **read the file again** to capture the **after** snapshot. Both snapshots are required by the next step (`replay-against-dataset`) so the experiment dashboard can render the literal edit alongside the results — this is per-experiment, not cumulative
    - Hold a one-line **change description** in working memory too (e.g. "fix off-by-one in retry logic", "tighten extraction prompt"). It will be the experiment's title in the viewer
    - If a file is newly created, the before snapshot is the empty string `""`. If a file is deleted, the after snapshot is `""`. The path is always the repo-relative file path — no `repo`, `commit`, or other context fields
-6. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Running replay"`.
+7. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Running replay"`.
 
-   **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `all` and `dataset` modes, or rehydrated at the start of this phase in `experiment` mode).
-
-   **Generate an experiment group ID.** At the start of each iteration, generate a fresh UUID to use as the `experimentGroupId` for this batch. This groups all test runs from this iteration together so the experiments page can stream them in live.
+   **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `all` and `dataset` modes, or rehydrated at the start of this phase in `experiment` mode). The experiment group ID was already generated and the experiments page was already opened in the `open-experiments-before-replay` step.
 
    **Write the code-change payload first.** Before running the script, write a tmp JSON file (e.g. `/tmp/bitfab-code-change-<experimentN>.json`) using the snapshots captured in `make-change`:
 
@@ -565,15 +581,7 @@ Run an iterative improvement loop. Each iteration:
 
    **Check the `supportsCodeChanges` flag** (from `detect-replay-capabilities`). If false, skip writing the code-change JSON file and omit `--code-change` from the invocation. The replay itself is unaffected; only the code-change metadata is missing from the experiment viewer.
 
-   **Check the `supportsExperimentGroups` flag** (from `detect-replay-capabilities`). If true, pass `--experiment-group-id <experimentGroupId>` so the test run is tagged with the group. The script forwards it into `client.replay()` as `experimentGroupId`. If false, skip the flag (the experiments page will still work via `testRunIds` fallback in `open-experiments`).
-
-   **Open the experiments page before running replay (if experiment groups are supported).** If `supportsExperimentGroups` is true, navigate Studio to the experiments page using the group ID:
-
-   ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" "/studio/experiments?experimentGroupId=<experimentGroupId>"
-   ```
-
-   This lets the user watch experiment results stream in live as the replay runs. If `supportsExperimentGroups` is false, skip this navigation (the `open-experiments` fallback will navigate with `testRunIds` after the replay completes).
+   **Check the `supportsExperimentGroups` flag** (from `detect-replay-capabilities`). If true, pass `--experiment-group-id <experimentGroupId>` (from `open-experiments-before-replay`) so the test run is tagged with the group. If false, skip the flag.
 
    Run the replay with the trace IDs and whichever flags are supported (omit unsupported flags):
 
@@ -619,7 +627,7 @@ Run an iterative improvement loop. Each iteration:
    - `total` — `result.items.length`; `0` or non-zero exit code = whole-replay crash
 
    If `completed === 0`, do not score pass/fail on an empty set — branch to `check-replay-health`.
-7. **Route on the counts and exit code.** Goal: keep infra noise out of evaluation. Read a sample of `item.error` strings (and stderr on crash) first to identify the DB-shaped pattern (missing record, FK / unique constraint, write rejected, connection refused, missing env).
+8. **Route on the counts and exit code.** Goal: keep infra noise out of evaluation. Read a sample of `item.error` strings (and stderr on crash) first to identify the DB-shaped pattern (missing record, FK / unique constraint, write rejected, connection refused, missing env).
 
    **🚨 Do not silently work around DB issues.** Do not drop affected trace IDs, stub the read in the script, gate writes behind a script-only flag, wrap the function in a rollback transaction, or edit the instrumented function to skip DB calls. Those all hide infra problems as fake passing or fake failing results and corrupt the experiment.
 
@@ -634,11 +642,11 @@ Run an iterative improvement loop. Each iteration:
    - **every item errored (completed is 0 but total is non-zero)** — systemic infra failure (usually env mismatch). Diagnose, confirm a script fix with the user, loop back
    - **high infra error rate (over half of items errored)** — signal is noisy. Flag the rate and ask the user whether to fix the env and retry, or proceed with the partial signal
    - **healthy or mixed run (at least one completed item, infra errors at most half of total)** — proceed. Carry `infraErrored` forward — surface as its own bucket in share-results, never folded into pass/fail
-8. **Route on whether replay trace IDs are available.** Check the `hasTraceIds` flag from `replay-against-dataset` (this confirms the tentative `supportsReplayTraceIds` flag from `detect-replay-capabilities`). This determines whether verdicts can be persisted to the server and whether the experiments page in Studio will show meaningful results.
+9. **Route on whether replay trace IDs are available.** Check the `hasTraceIds` flag from `replay-against-dataset` (this confirms the tentative `supportsReplayTraceIds` flag from `detect-replay-capabilities`). This determines whether verdicts can be persisted to the server and whether the experiments page in Studio will show meaningful results.
 
    - **replay trace IDs are populated (`hasTraceIds` is true)** — the SDK and server support trace ID mapping. Open the experiments page in Studio first (so the user can watch verdicts populate in real time), then evaluate and persist labels
    - **replay trace IDs are null (`hasTraceIds` is false)** — tell the user: "Your SDK doesn't support replay trace IDs, so experiment results can't be persisted to Studio or compared across iterations. Upgrade your SDK and run `$bitfab:setup replay` to regenerate the script. Evaluating in-agent for now." Then proceed to text-only evaluation so the user still sees comparison results in-agent, without the Studio experiments page
-9. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Evaluating results"`.
+10. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Evaluating results"`.
 
    **Evaluate results in-agent without persisting.** This path runs when replay trace IDs are unavailable (old SDK or server). The agent still compares original vs new outputs and derives pass/fail verdicts, but cannot persist them via `persistReplayLabels.js` or show them in Studio.
 
@@ -649,7 +657,7 @@ Run an iterative improvement loop. Each iteration:
    - Unreplayable items (`item.error` set) go in their own bucket.
 
    Hold the verdicts in working context for `share-results`. Since trace IDs are unavailable, do NOT attempt to run `persistReplayLabels.js` or open the experiments page.
-10. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Evaluating results"`.
+11. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Evaluating results"`.
 
    **Evaluate against labels & annotations.** Score only items where `item.error` is unset. Items with `item.error` set are unreplayable (already classified) and go in their own bucket — never pass, fail, or regression.
 
@@ -689,15 +697,15 @@ Run an iterative improvement loop. Each iteration:
    4. Read its single JSON line on stdout. Hold the parsed result for the next step.
 
    **Spill working notes to a separate tmp file if context gets big.** Don't conflate working notes with the verdicts file — the script deletes the verdicts file on success.
-11. **Verify replay labels persisted.** Route on the `status` field of the JSON the script printed in `evaluate-results`. The script is the deterministic gate — if it didn't return `ok`, the agent's verdicts are NOT yet on the replay traces and the experiment delta will be wrong on the next iteration.
+12. **Verify replay labels persisted.** Route on the `status` field of the JSON the script printed in `evaluate-results`. The script is the deterministic gate — if it didn't return `ok`, the agent's verdicts are NOT yet on the replay traces and the experiment delta will be wrong on the next iteration.
 
    - **`status: "ok"` (every replay trace has a verdict or explicit skip persisted)** — labels are persisted on the replay traces and the verdicts file is gone. Continue to share-results (experiments page was already opened before evaluation)
    - **`status: "missing-coverage"` (script returned a non-empty `missingTraceIds` array)** — you under-verdicted. Read the missing replay trace IDs (use `mcp__Bitfab__read_traces` with `scope: "summary"` or `"full"` if you didn't already), decide each one (PASS / FAIL with annotation, or `skip: true` if genuinely ambiguous), write a NEW verdicts file at the same path covering ALL the originally expected IDs (the script needs the full `expectedTraceIds` list each call, not just the gaps), and re-run the script. Loop back here with the new result
    - **`status: "invalid-input"` (malformed verdicts JSON or missing fields)** — the verdicts file you wrote doesn't match the schema. Read the script's `message` field, fix the JSON (most common: missing annotation on a non-skip entry, missing traceId, expectedTraceIds empty), and re-run the script. Loop back here
    - **`status: "mcp-error"` (MCP call to update_agent_labels failed mid-batch)** — network or auth error. The script's `partialTraceIds` lists which IDs were already persisted. Tell the user, recommend re-running the script (it's idempotent — already-persisted labels just upsert), and loop back here. If it keeps failing, stop and surface the error
-12. **Open experiment viewer (fallback).** This step only runs when replay trace IDs are available (routed here from `check-trace-id-support`). If no `testRunId`s were captured, skip this step and continue to evaluate.
+13. **Open experiment viewer (fallback).** This step only runs when replay trace IDs are available (routed here from `check-trace-id-support`). If no `testRunId`s were captured, skip this step and continue to evaluate.
 
-   If the experiments page was already opened via `experimentGroupId` in `replay-against-dataset` (`supportsExperimentGroups` is true), skip this step entirely, the page is already showing live results.
+   If the experiments page was already opened via `experimentGroupId` in `open-experiments-before-replay` (`supportsExperimentGroups` is true), skip this step entirely, the page is already showing live results.
 
    If `supportsExperimentGroups` is false, navigate Studio to the experiments page. Build the path with **every** `testRunId` you've collected across iterations of this phase (comma-separated):
 
@@ -706,7 +714,7 @@ Run an iterative improvement loop. Each iteration:
    ```
 
    The command navigates an existing session or opens a new one automatically.
-13. **Share results to the user.**
+14. **Share results to the user.**
 
    > "After N experiments these are the results: X/Y traces now pass (Z unreplayable, excluded from pass/fail).
    >
