@@ -49,7 +49,6 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 |---|---|
 | `$bitfab:setup` or `$bitfab:setup all` | Run login, then instrument + replay (together per workflow) |
 | `$bitfab:setup login` | Authenticate via browser OAuth and retrieve API key |
-| `$bitfab:setup login headless` | Authenticate by pasting a token (no browser callback needed) |
 | `$bitfab:setup instrument` | Instrument AI workflows with Bitfab tracing |
 | `$bitfab:setup modify` | Modify an existing trace setup (add context, change depth, or move the root) |
 | `$bitfab:setup view` | Open the trace planner UI for an existing trace function (read-only) |
@@ -127,7 +126,7 @@ Authenticate with Bitfab and retrieve the API key.
 
    **If the browser fails to open**, `login.js` prints the Studio sign-in URL. Surface it to the user verbatim so they can open it manually. The polling loop stays active for the full 10-minute timeout regardless of whether auto-launch worked.
 
-   Only fall through to **Login (headless)** below when `login.js` exits non-zero or the 10-minute timeout elapsed.
+   If `login.js` exits non-zero or the 10-minute timeout elapsed, report the error to the user and stop.
 3. Call `mcp__Bitfab__get_bitfab_api_key` to retrieve the API key — **NEVER print or log the full key**. Stored at `~/.config/bitfab/credentials.json`, used for the `BITFAB_API_KEY` environment variable.
 4. Check whether session log consent has already been recorded:
 
@@ -147,57 +146,6 @@ Authenticate with Bitfab and retrieve the API key.
    ```
 
 **If running `login` only**, stop here and report the result.
-
-## Login (headless)
-
-**Run only when mode is `all`, `login` or `login-headless`.**
-
-Use this flow only when `login.js` itself can't deliver — i.e. both the loopback callback AND the server-polled ticket channel failed to start, or `login.js` exited with an error / hit the 10-minute timeout. Sandboxed environments (Codex seatbelt, containers, SSH, cloud IDEs) on their own are NOT a reason to use this flow — the ticket channel inside `login.js` handles those. Triggered explicitly by `$bitfab:setup login headless`, or as an automatic fallback per the strict conditions in the Login step above.
-
-1. Determine the service URL. Default is `https://bitfab.ai`. If the user has a custom deployment, read it from `~/.config/bitfab/config.json` (field `serviceUrl`) or the `BITFAB_SERVICE_URL` environment variable.
-2. Tell the user:
-   > Open this URL in a browser on any device: **{serviceUrl}/studio/auth/codex**
-   >
-   > Sign in with your Bitfab account. The page will show an API key with a copy button. Paste the token here when you have it.
-3. Wait for the user's next message — it will contain the token. Do NOT ask the user here (it adds an unnecessary extra step before the user can paste).
-4. When the user pastes the token, validate it with curl — do NOT echo the token back to the user or print it in any output:
-
-   ```bash
-   curl -fsS -H "Authorization: Bearer <TOKEN>" "{serviceUrl}/api/plugin/whoami"
-   ```
-
-   If this returns 200 with a JSON body containing `user.email`, the token is valid. If it fails, tell the user the token was invalid and ask them to re-paste (do not re-print the bad token).
-5. Save the token to `~/.config/bitfab/credentials.json` writing a file with this exact content (replace `<TOKEN>` with the pasted value, nothing else):
-
-   ```json
-   {
-     "apiKey": "<TOKEN>"
-   }
-   ```
-
-   Create the `~/.config/bitfab/` directory first if it doesn't exist:
-
-   ```bash
-   mkdir -p ~/.config/bitfab
-   ```
-6. Confirm success to the user by referencing the email returned from `/api/plugin/whoami` — e.g. "Signed in as alice@example.com." **Never echo the token back.**
-7. Check whether session log consent has already been recorded:
-
-   ```bash
-   node -e "const fs=require('fs'),os=require('os'),p=require('path').join(os.homedir(),'.config/bitfab/config.json');const c=JSON.parse(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'{}');console.log(c.sessionLogConsent??'null')"
-   ```
-
-   If the output is already `true` or `false`, skip the prompt and continue. If the output is `null`, ask the user:
-   - **Question:** "Allow Bitfab to collect session logs?"
-   - **Description:** Used to diagnose issues and improve the product.
-   - **Options:** "Allow" / "Don't allow"
-
-   Save the answer (replace `CONSENT` with `true` or `false`):
-
-   ```bash
-   node -e "const fs=require('fs'),os=require('os'),p=require('path').join(os.homedir(),'.config/bitfab/config.json');fs.mkdirSync(require('path').dirname(p),{recursive:true});const c=JSON.parse(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'{}');c.sessionLogConsent=CONSENT;fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n')"
-   ```
-8. Continue with the rest of setup, or stop if running `login headless` only.
 
 ## Session Logs
 
