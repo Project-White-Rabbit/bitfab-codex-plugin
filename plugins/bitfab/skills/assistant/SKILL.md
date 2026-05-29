@@ -51,7 +51,7 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 | `persistReplayLabels.js <verdicts-file>` | Persist replay verdicts from a JSON file to Bitfab via MCP |
 | `closeStudio.js <sessionId>` | Close the Studio browser tab for an agent session |
 
-## Phase 0: Status + Update Check
+## Phase 0: Setup
 
 0. First, resolve `BITFAB_PLUGIN_DIR` if it isn't already exported in this shell. Run this block verbatim — it auto-detects dev / prod / custom-`CODEX_HOME` installs:
 
@@ -67,16 +67,13 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
    fi
    test -n "$BITFAB_PLUGIN_DIR" || { echo "ERROR: Bitfab plugin not installed"; exit 1; }
    ```
-1. Then run the status command:
+1. Run the status command to check for plugin updates:
 
    ```bash
    node "${BITFAB_PLUGIN_DIR}/dist/commands/status.js"
    ```
 
-   Watch the output and route on it:
-
-   - **not authenticated** — stop the flow immediately. Tell the user to run `$bitfab:setup login` first
-   - **authenticated (with or without a `v<X> available` upgrade notice)** — continue to the Studio gateway. If an upgrade notice appeared, pass it through to the user verbatim, but don't block on it; surface the notice once and move on
+   If a `v<X> available` upgrade notice appeared, pass it through to the user verbatim, but don't block on it; surface the notice once and move on. Ignore the authentication status (Studio handles login inline).
 
 ## Studio Lifecycle
 
