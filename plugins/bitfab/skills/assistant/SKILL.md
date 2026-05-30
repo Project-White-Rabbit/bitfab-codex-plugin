@@ -46,7 +46,7 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 | Command | Description |
 |---------|-------------|
 | `status.js` | Check plugin authentication and connection status |
-| `openStudioTo.js <path> [agentSessionId]` | Navigate an existing Studio session or open a new one at the given path |
+| `openStudioTo.js <path> [studioSessionId]` | Navigate an existing Studio session or open a new one at the given path |
 | `pushActivity.js {action} "{displayName}"` | Emit activity events to the Studio sidebar |
 | `persistReplayLabels.js <verdicts-file>` | Persist replay verdicts from a JSON file to Bitfab via MCP |
 | `closeStudio.js <sessionId>` | Close the Studio browser tab for an agent session |
@@ -96,8 +96,10 @@ If the Studio tab was closed (intentionally or by crash), `openStudioTo.js` dete
 1. Open Studio at the initial path for this mode. `openStudioTo.js` is the single entry point for all Studio operations: it navigates an existing session or opens a new one automatically.
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" <path> [agentSessionId]
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" <path> [studioSessionId]
    ```
+
+   Normally omit `studioSessionId` — the command resolves this agent's active session on its own. Pass it only to reconnect to a specific Studio session (e.g. the id from a disconnect popup's reconnect prompt).
 
    **The path MUST start with `/studio`.** Never pass `/`, a bare URL, or any path outside the `/studio/` route tree.
 
