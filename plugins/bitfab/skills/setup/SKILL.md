@@ -18,9 +18,9 @@ description: "Set up Bitfab tracing to improve AI features autonomously. TRIGGER
 - Stop polling only when: (a) the process exits 0 with its completion summary, (b) the process exits non-zero, or (c) the user explicitly cancels.
 - When the process exits, immediately continue with the next step, do not wait for another user message.
 
-This skill has seven phases: **login**, **session-logs**, **instrument**, **modify**, **view**, **replay**, and **templates**. Run individually or all at once (`all` runs login → instrument → replay; `session-logs` is standalone and does not require login; `modify` is only invoked explicitly or as a branch from the Instrument step 2 menu; `view` is only invoked explicitly; `templates` is only invoked explicitly).
+This skill has seven phases: **login**, **session-logs**, **instrument**, **modify**, **view**, **replay**, and **templates**. Run individually or all at once (`wizard` runs login → instrument → replay; `session-logs` is standalone and does not require login; `modify` is only invoked explicitly or as a branch from the Instrument step 2 menu; `view` is only invoked explicitly; `templates` is only invoked explicitly).
 
-Within an Instrument cycle, **instrumentation and the replay pipeline for the cycle's trace function are written in the same batch of tool calls** once the trace plan is confirmed (see step 11). The Replay phase in `all` mode is therefore a coverage-verification/backfill sweep — it typically finds every key already wired up.
+Within an Instrument cycle, **instrumentation and the replay pipeline for the cycle's trace function are written in the same batch of tool calls** once the trace plan is confirmed (see step 11). The Replay phase in `wizard` mode is therefore a coverage-verification/backfill sweep — it typically finds every key already wired up.
 
 **Before running plugin commands below**, resolve `BITFAB_PLUGIN_DIR` in the shell. Codex does not inject a plugin-root env var, so you must determine it. Copy and run this block verbatim — it auto-detects whichever install is active (dev, prod, or a custom `CODEX_HOME`):
 
@@ -47,7 +47,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 
 | Invocation | Action |
 |---|---|
-| `$bitfab:setup` or `$bitfab:setup all` | Run login, then instrument + replay (together per workflow) |
+| `$bitfab:setup` or `$bitfab:setup wizard` | Run login, then instrument + replay (together per workflow) |
 | `$bitfab:setup login` | Authenticate via browser OAuth and retrieve API key |
 | `$bitfab:setup instrument` | Instrument AI workflows with Bitfab tracing |
 | `$bitfab:setup modify` | Modify an existing trace setup (add context, change depth, or move the root) |
@@ -69,7 +69,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 
 ## Preamble
 
-**Run only when mode is `all`.**
+**Run only when mode is `wizard`.**
 
 1. Render the block below **verbatim** as a single message, then continue straight to Login. Do **not** ask for confirmation, do **not** ask any extra questions, do **not** summarize in your own words.
 
@@ -101,7 +101,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 
 ## Login
 
-**Run only when mode is `all` or `login`.**
+**Run only when mode is `wizard` or `login`.**
 
 Authenticate with Bitfab and retrieve the API key.
 
@@ -174,7 +174,7 @@ Opt in or out of session log collection. Does not require authentication.
 
 ## Instrument
 
-**Run only when mode is `all` or `instrument`.**
+**Run only when mode is `wizard` or `instrument`.**
 
 Instrument the codebase with Bitfab tracing. Requires authentication (run Login first if needed).
 
@@ -279,17 +279,17 @@ Bitfab captures every AI function call — inputs, outputs, and errors — so yo
    > A) **Generate traces [current workflow]** *(recommended)*
    > B) **Instrument [next workflow]** — [why it's the next highest value]
    > C) **Instrument [other workflow]** — [alternative]
-   > D) **Done instrumenting** — proceed to Replay (in `all` mode) / Done (in `instrument` mode)
+   > D) **Done instrumenting** — proceed to Replay (in `wizard` mode) / Done (in `instrument` mode)
 
    **For option A**, present the script to run to the user (allow them to let you run it for them). Before starting the wait, tell the user verbatim: `Polling for first trace (up to ~10 min) — press Esc to cancel.` Then run in a shell (allow up to ~11 min): `node "${BITFAB_PLUGIN_DIR}/dist/commands/waitForTrace.js" <trace-function-key>`. The command blocks inside Node — polling Bitfab every 10s until a trace lands or the ~10 min timeout fires — so no agent tokens are burned while waiting. When it exits, parse the final stdout line as JSON: `{"status":"found","traceId":"…","url":"…"}` → report the trace URL; `{"status":"timeout",…}` → note that no trace arrived yet; `{"status":"interrupted",…}` → the user cancelled.
 
    A, B, and C all return to step 8 for the selected workflow. Only D exits the Instrument loop.
 
-   **After D in `all` mode, Replay ALWAYS runs** as a coverage-verification/backfill sweep. Step 11 already wrote a replay pipeline for every trace function instrumented in this session, so Replay is usually a no-op that confirms coverage; it still runs to catch any pre-existing trace function keys that don't yet have a pipeline and to verify Replay Output Contract compliance across all pipelines. Replay does not depend on traces existing — replay scripts are built from trace function keys in the instrumented code, not captured trace data. In `instrument` mode, D stops after the Instrument loop.
+   **After D in `wizard` mode, Replay ALWAYS runs** as a coverage-verification/backfill sweep. Step 11 already wrote a replay pipeline for every trace function instrumented in this session, so Replay is usually a no-op that confirms coverage; it still runs to catch any pre-existing trace function keys that don't yet have a pipeline and to verify Replay Output Contract compliance across all pipelines. Replay does not depend on traces existing — replay scripts are built from trace function keys in the instrumented code, not captured trace data. In `instrument` mode, D stops after the Instrument loop.
 
 ## Modify
 
-**Run only when mode is `all`, `instrument` or `modify`.**
+**Run only when mode is `wizard`, `instrument` or `modify`.**
 
 Adjust an **existing** trace setup. Requires existing SDK usage in the codebase — if none exists, run Instrument first. Triggered explicitly by `$bitfab:setup modify`, or selected from the choice prompt at Instrument step 2 when existing SDK usage is found.
 
@@ -387,13 +387,13 @@ Every View invocation targets **exactly one** trace function. The browser UI's C
 
 ## Replay
 
-**Run only when mode is `all` or `replay`.**
+**Run only when mode is `wizard` or `replay`.**
 
 Create or update replay scripts for instrumented trace functions. Requires instrumentation in the codebase; does **not** require existing traces — replay scripts are created from trace function keys in the code, not captured trace data.
 
 Replay scripts let the team regression-test any trace function against production data with one command — they fetch historical traces, re-run them through the current code, and report old vs. new outputs side-by-side. Note: **Go does not support replay** — skip this phase if the project is Go-only.
 
-**Relationship to Instrument.** When Replay runs via `all` mode or directly after Instrument, most (often all) trace function keys already have pipelines because Instrument step 11 writes them in the same cycle as the instrumentation edits. This phase is then a coverage + contract-compliance sweep. Run it standalone (`$bitfab:setup replay`) to catch pre-existing trace function keys that predate the parallel-write step or were added outside the skill.
+**Relationship to Instrument.** When Replay runs via `wizard` mode or directly after Instrument, most (often all) trace function keys already have pipelines because Instrument step 11 writes them in the same cycle as the instrumentation edits. This phase is then a coverage + contract-compliance sweep. Run it standalone (`$bitfab:setup replay`) to catch pre-existing trace function keys that predate the parallel-write step or were added outside the skill.
 
 **Source of truth:** two pages — read both before creating or modifying a replay script. Do not improvise from memory.
 - **Canonical `replay` API signature, options, and return shape:** `/reference/typescript#replay`, `/reference/python#replay`, `/reference/ruby#replay` (Go has no replay). Use this for the exact field names (`result` / `originalOutput` vs `original_output`), default `limit`, `maxConcurrency`/`max_concurrency`, error behavior.
@@ -435,7 +435,7 @@ Replay scripts let the team regression-test any trace function against productio
 
 **Run only when mode is `templates`.**
 
-Iterate on the **span-rendering templates** for one trace function. Each round: the user describes what should look different, you call `mcp__Bitfab__get_template` → edit → `mcp__Bitfab__update_template` **with `traceFunctionKey` set to the picked key**, and the user refreshes the chromeless template-preview page to see the change rendered against a real trace. Loop until the user is satisfied. Triggered explicitly by `$bitfab:setup templates [<key>]` — never reached from `all`.
+Iterate on the **span-rendering templates** for one trace function. Each round: the user describes what should look different, you call `mcp__Bitfab__get_template` → edit → `mcp__Bitfab__update_template` **with `traceFunctionKey` set to the picked key**, and the user refreshes the chromeless template-preview page to see the change rendered against a real trace. Loop until the user is satisfied. Triggered explicitly by `$bitfab:setup templates [<key>]` — never reached from `wizard`.
 
 Templates control how a span's input / output renders in the Bitfab UI. They are scoped per **span type** (`llm`, `agent`, `function`, `guardrail`, `handoff`, `custom`). This phase **always passes `traceFunctionKey`** so edits become **per-function overrides**: they apply only to spans on traces of the picked function, not to other functions in the org. Resolution at render time is per-key row → org-global → file default, so the seed you see in `mcp__Bitfab__get_template` reflects whatever is currently rendering for this function. Surface this scope when the user asks for a change so they know nothing else in the org is affected.
 
