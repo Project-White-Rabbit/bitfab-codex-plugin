@@ -96,10 +96,10 @@ The Studio is the companion browser surface for the entire assistant flow. It op
 
 Output events:
 - `{"event":"navigated","sessionId":"...","path":"..."}` — success (existing or new session).
-- `{"event":"not-responding","sessionId":"...","path":"..."}` — an active session exists but didn't respond. **This is a gate.** Recommend the user refresh the Studio tab in their browser, then ask the user with two options: **Try again** (you retry `openStudioTo.js <path>`, the session is still on disk so the retry finds it) or **Open a new Studio** (run `openStudioTo.js --new <path>` to clear the stale session and open fresh).
+- `{"event":"not-responding","sessionId":"...","path":"..."}` — an active session exists but didn't respond. **This is a gate.** Recommend the user refresh the Studio tab in their browser, then ask the user with two options: **Try again** (you retry `openStudioTo.js <path>`, the session is still on disk so the retry finds it) or **Open a new Studio** (run `openStudioTo.js --new <path>` to open a fresh window).
 - `{"event":"open-failed","sessionId":"...","reason":"..."}` — failed to open a new Studio. Surface the error.
 
-If the Studio tab was closed (intentionally or by crash), `openStudioTo.js` detects this automatically, clears the stale session, and opens a fresh one. No gate, no user prompt.
+`openStudioTo.js` only emits `not-responding` (the gate) when the previous window went unreachable with **no close signal** — a crash, sleep, or a tab close no process witnessed. If the tab was closed cleanly it opens a fresh Studio immediately (no handshake, no prompt), and if the session was **deliberately ended** ("return to agent & close") it tries to reconnect once and, failing that, opens a fresh one silently. So the gate fires only when a window might genuinely still be alive and recoverable.
 
 **Never use Playwright, `open`, `chrome-testing`, or any other browser automation to open Studio pages.** Always use `openStudioTo.js` which handles auth and session management.
 
