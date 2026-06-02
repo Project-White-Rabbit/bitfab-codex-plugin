@@ -60,7 +60,7 @@ pnpm --filter bitfab-codex-plugin validate  # lint + tsc + knip + madge
 
 ### Local install
 
-Codex has no live-from-worktree mode — each rebuild must be vendored and copied into `~/.codex/plugins/cache/bitfab-internal/bitfab/local/`. Run the `/bitfab-codex-dev-build` skill to automate that. The `/bitfab-codex-toggle` skill switches between dev and prod variants (flag is user-global — Codex has no `--scope local`).
+Codex has no live-from-worktree mode: each rebuild must be vendored and copied into `~/.codex/plugins/cache/bitfab-internal/bitfab/local/`. Run `$bitfab-dev:plugin build` to automate that. `$bitfab-dev:plugin toggle` switches between dev and prod variants (flag is user-global; Codex has no `--scope local`).
 
 ### Shared behavior
 
