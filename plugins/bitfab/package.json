@@ -1,10 +1,10 @@
 {
   "name": "bitfab-codex-plugin",
-  "version": "0.6.75",
+  "version": "0.6.76",
   "description": "Automated regression testing and improvements for your prompts, context, and tool calls.",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
     "lint": "biome check",
