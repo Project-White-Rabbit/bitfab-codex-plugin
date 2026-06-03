@@ -23,10 +23,10 @@ This skill has six invocation modes, each a different entry point into the same 
 | `investigate` | `$bitfab:assistant investigate [<key>]` | Free-form investigation of an issue the user is describing. Read traces and code as needed to characterize the problem, then offer to stop with a summary, write a written analysis report, or roll into dataset building and continue through experiments. `<key>` is optional, the agent picks the function from what the user says when it isn't given |
 | `dataset` | `$bitfab:assistant dataset <key>` | Build or extend a labeled dataset for one function, then diagnose failures and iterate with experiments. Picks an existing dataset or creates a new one |
 | `experiment` | `$bitfab:assistant experiment <key> [<dataset-id>]` | **Edits code** to fix failing traces, replays against a labeled dataset, and iterates. Use when the user wants to *change the code and see if it improves*. If `<dataset-id>` is omitted, you'll be asked to pick one. If the function has no datasets yet, run `$bitfab:assistant dataset <key>` first |
-| `benchmark` | `$bitfab:assistant benchmark <key> [<dataset-id>]` | **No edits to the function under test.** Replay a labeled dataset against the current code as-is, evaluate each trace against its labels, and report a pass/fail scorecard, then stop. Use when the user wants to *measure the current code* (regression test, baseline, score after unrelated changes), not improve it. Infra fixes that unblock the replay (SDK / replay-script upgrade, `mockOnReplay` on a failing span) are allowed — they don't change the behavior being measured; what benchmark never does is make experiment-style edits to the traced function. If `<dataset-id>` is omitted, you'll be asked to pick one |
+| `benchmark` | `$bitfab:assistant benchmark <key> [<dataset-id>] [studio]` | **No edits to the function under test.** Replay a labeled dataset against the current code as-is, evaluate each trace against its labels, and report a pass/fail scorecard, then stop. Use when the user wants to *measure the current code* (regression test, baseline, score after unrelated changes), not improve it. Infra fixes that unblock the replay (SDK / replay-script upgrade, `mockOnReplay` on a failing span) are allowed (they don't change the behavior being measured); what benchmark never does is make experiment-style edits to the traced function. If `<dataset-id>` is omitted, you'll be asked to pick one. **Terminal-only by default (no Studio).** Append the `studio` keyword to open Studio's experiments page and stream verdicts live as the replay runs |
 | `add-trace` | `$bitfab:assistant add-trace [<key>] <trace-id...> [<dataset-id>]` | Lightweight: attach one or more existing traces to a dataset (pick or create one), then stop. No labeling, diagnosis, experiments, or Studio. `<key>` is **optional** — it's inferred from the traces when omitted, so `add-trace <trace-uuid>` (trace IDs only) is valid. The request can also be phrased in natural language (e.g. "add trace abc123 to a dataset") |
 
-**Argument routing.** If the argument is free-form text (not a mode name or bare function key), infer the best mode and extract the trace function key if mentioned. Confirm your pick in one line before entering the flow (e.g. "Starting investigate for `generate-email`."). If you can't pick a single mode, ask as a numbered choice. Natural-language requests to attach a specific trace to a dataset (e.g. "add this trace to a dataset", "put trace abc123 in my dataset") route to `add-trace`; extract the trace IDs and any function key or dataset ID mentioned.
+**Argument routing.** If the argument is free-form text (not a mode name or bare function key), infer the best mode and extract the trace function key if mentioned. Confirm your pick in one line before entering the flow (e.g. "Starting investigate for `generate-email`."). If you can't pick a single mode, ask as a numbered choice. Natural-language requests to attach a specific trace to a dataset (e.g. "add this trace to a dataset", "put trace abc123 in my dataset") route to `add-trace`; extract the trace IDs and any function key or dataset ID mentioned. In `benchmark` mode, a trailing `studio` token (e.g. `benchmark generate-email studio`) or a natural-language "with studio" / "open studio" sets the **Studio opt-in** for that run: strip it from the positional args before resolving the function key and dataset ID, and hold it as a working-context flag. It applies only to `benchmark` (every other mode always opens Studio). **When the opt-in is set, treat `studioMode` as true for the rest of the run** (Studio is open), so the **Studio activity** (`node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js"`) steps fire just as in the always-Studio modes; a terminal-only benchmark leaves `studioMode` false and those steps no-op.
 
 **Disambiguating `benchmark` from `experiment`** (both replay a dataset, so free-form text is easy to misroute):
 
@@ -37,7 +37,7 @@ When in genuine doubt between the two, default to **`benchmark`** (it's non-dest
 
 In sub-modes that take a function key, grep the codebase for `<key>` early so labeling and experiments are grounded in the actual instrumented function (the full flow does this in Phase 2; sub-modes skip Phase 2 entirely). `investigate` mode does its own function lookup and code grep in Phase Investigate. `add-trace` mode skips code grounding entirely — it never greps the codebase; it only resolves the trace's function key (via `read_traces` when not supplied) to scope the dataset.
 
-**Studio** is the companion browser surface for the assistant flow in every mode **except `benchmark` and `add-trace`**. In those modes it opens automatically at the start and stays open throughout all phases, and individual phases navigate it to the relevant page (dataset review, experiment viewer, etc.). `benchmark` and `add-trace` are terminal-only and never open Studio.
+**Studio** is the companion browser surface for the assistant flow. In every mode **except `benchmark` and `add-trace`** it opens automatically at the start and stays open throughout all phases, and individual phases navigate it to the relevant page (dataset review, experiment viewer, etc.). `add-trace` is terminal-only and never opens Studio. `benchmark` is terminal-only **by default** too, but opting in with the `studio` keyword opens Studio and navigates to the experiments page for this test run so verdicts stream in live as the replay runs.
 
 **Opening a trace plan, when asked.** Opening trace plans is part of this skill, not a separate primitive — but only do it when the user asks (or the context clearly implies it, e.g. they said "show me what's captured"). Never auto-open. When triggered, run two sequential calls (step 2 needs the planId from step 1, so they can't be batched): (1) `mcp__Bitfab__get_trace_plan` with `{ traceFunctionKey: "<key>" }` returns the plan id, then (2) `openStudioTo.js "/studio/trace-plan/<planId>"` (substituting the id from step 1) routes Studio there in-place. The command finds an active session or opens a new one automatically. The Studio chrome (header, session indicator, agent activity) stays mounted around the trace plan content. No questions, no preamble, no summary up-front. If no plan exists for the key, say so in one line and offer `$bitfab:setup modify <key>` to build one.
 
@@ -89,9 +89,9 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 
 ## Studio Lifecycle
 
-**Run only when mode is `wizard`, `dataset`, `experiment` or `investigate`.**
+**Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
-The Studio is the companion browser surface for the entire assistant flow. It opens once at the start and stays open throughout all phases. Individual phases navigate the Studio to the relevant page (dataset review, experiment viewer, etc.) using `openStudioTo.js`.
+The Studio is the companion browser surface for the assistant flow. In every mode that uses it, it opens once at the start and stays open throughout all phases, with individual phases navigating it to the relevant page (dataset review, experiment viewer, etc.) using `openStudioTo.js`. **`benchmark` is the exception:** it opens Studio only when the run passed the `studio` opt-in. A terminal-only `benchmark` run (no `studio` keyword) opens no Studio at all, and the `open` step below self-skips for it.
 
 **`openStudioTo.js` handles session resolution automatically.** It takes a single `<path>` argument and reads auth from your local config. The active Studio session is the single source of truth on disk:
 1. If an active session is recorded, it navigates that window to the path and reuses it.
@@ -109,7 +109,9 @@ The gate fires only when a recorded window went unreachable with **no close sign
 
 **Never use Playwright, `open`, `chrome-testing`, or any other browser automation to open Studio pages.** Always use `openStudioTo.js` which handles auth and session management.
 
-1. Open Studio at the initial path for this mode. `openStudioTo.js` is the single entry point for all Studio operations: it navigates an existing session or opens a new one automatically.
+1. **In `benchmark` mode, first check the Studio opt-in flag** (set during argument routing when the `studio` keyword was passed). If benchmark did NOT opt in, skip this entire step without running any command and continue to `phase-5/pick-dataset`. In all other modes, and in `benchmark` with the `studio` flag, proceed.
+
+   Open Studio at the initial path for this mode. `openStudioTo.js` is the single entry point for all Studio operations: it navigates an existing session or opens a new one automatically.
 
    ```bash
    node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" <path>
@@ -123,7 +125,7 @@ The gate fires only when a recorded window went unreachable with **no close sign
    - **`dataset <key>` mode:** pass `/studio/trace-functions/<key>/datasets/labeled`
    - **`experiment <key>` mode:** pass `/studio`
    - **`investigate [<key>]` mode:** pass `/studio`
-   - **`benchmark <key>` mode:** does not use this step at all — benchmark is terminal-only and never opens Studio (it enters directly at `phase-5/pick-dataset`)
+   - **`benchmark <key>` mode:** only when the run opted in with the `studio` keyword (the working-context flag from argument routing): pass `/studio`. Without the flag, benchmark is terminal-only: do NOT run `openStudioTo.js` at all, skip straight to `phase-5/pick-dataset` (the step's `next` already routes there)
 
    If no active Studio session exists, the command opens a new one and enters an event loop (stays running). Run it via your runtime's "long-running exec session" mechanism. If an active session already exists, it navigates and exits immediately.
 
@@ -530,7 +532,7 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
 In `experiment` mode this is an iterative improvement loop (each iteration makes a change and replays). In `benchmark` mode it is a single replay of the current code followed by a terminal scorecard — no changes, no iteration.
 
-`openStudioTo.js` resolves the active session automatically (non-benchmark modes only; benchmark opens no Studio).
+`openStudioTo.js` resolves the active session automatically. `benchmark` mode opens Studio only when the run opted in with the `studio` keyword; without it, benchmark opens no Studio and runs terminal-only.
 
 1. **Run only when mode is `experiment` or `benchmark`.**
 
@@ -545,7 +547,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
       - In `experiment` mode, the dataset must have **≥1 validated failing label** (there has to be something to fix).
       - In `benchmark` mode, the dataset just needs **≥1 trace** — benchmark replays the entire dataset against the current code regardless of label mix (an all-passing dataset is a valid regression baseline).
 
-   - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset fails the mode's usability gate (experiment: no validated failing labels; benchmark: no traces at all)** — tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; kill the Studio background process if one was opened (none in benchmark mode); then stop the flow
+   - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset fails the mode's usability gate (experiment: no validated failing labels; benchmark: no traces at all)** — tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; kill the Studio background process if one was opened (none in benchmark mode unless the `studio` flag was passed); then stop the flow
    - **dataset loaded (experiment: ≥1 validated failing label; benchmark: ≥1 trace)** — summarize the dataset for the user (counts of pass/fail) and the failure annotations. In `experiment` mode, pick a first experiment from the failure patterns. In `benchmark` mode, confirm the dataset and proceed to replay the full set
 2. **Run only when mode is `experiment`.**
 
@@ -616,11 +618,19 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    **Generate an experiment group ID.** Generate a fresh UUID to use as the `experimentGroupId` for this iteration. This groups all test runs from this iteration together so the experiments page can stream results live as the replay runs.
 
-   **Open the experiments page.** **In `benchmark` mode, do NOT run any `openStudio` navigation** (no Studio is open) — just generate the experiment group ID above for tagging the test run on the server, then continue to `replay-against-dataset`. In all other modes, if `supportsExperimentGroups` is true, navigate Studio to the experiments page using the group ID:
+   **Open the experiments page.** Pick exactly one case (they are mutually exclusive):
 
-   ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" "/studio/experiments?experimentGroupId=<experimentGroupId>"
-   ```
+   - **`benchmark` mode WITHOUT the `studio` opt-in:** do NOT run any `openStudio` navigation (no Studio is open). Just generate the experiment group ID above for tagging the test run on the server, then continue to `replay-against-dataset`.
+   - **`benchmark` mode WITH the `studio` flag** (and `supportsExperimentGroups` is true): navigate Studio to the experiments page using the group ID **and** `&mode=benchmark`, so the page relabels its copy as "Benchmark" (the underlying run is still an experiment; only the displayed noun changes):
+
+     ```bash
+     node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" "/studio/experiments?experimentGroupId=<experimentGroupId>&mode=benchmark"
+     ```
+   - **All other modes** (and `supportsExperimentGroups` is true): navigate Studio to the experiments page using the group ID (no `mode` parameter):
+
+     ```bash
+     node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" "/studio/experiments?experimentGroupId=<experimentGroupId>"
+     ```
 
    This is a navigation call, not a long-running process. The existing Studio session handles it. If `supportsExperimentGroups` is false, skip this navigation (the `open-experiments` fallback will navigate with `testRunIds` after the replay completes).
 6. **Run only when mode is `wizard`, `dataset`, `experiment` or `investigate`.**
@@ -637,7 +647,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Running replay"`.
 
-   **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `wizard` and `dataset` modes, or rehydrated at the start of this phase in `experiment` and `benchmark` modes). The experiment group ID was already generated in the `open-experiments-before-replay` step (which also opened the experiments page in Studio in non-benchmark modes; in `benchmark` mode no Studio is opened).
+   **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `wizard` and `dataset` modes, or rehydrated at the start of this phase in `experiment` and `benchmark` modes). The experiment group ID was already generated in the `open-experiments-before-replay` step (which also opened the experiments page in Studio in non-benchmark modes, and in `benchmark` mode only when the `studio` flag was passed).
 
    **In `benchmark` mode, skip the code-change payload entirely.** Benchmark makes no experiment-style edits to the traced function, so there is no code diff to capture. Omit `--code-change` from the invocation. The replay evaluates the current code as-is against the labeled dataset. Use `"Benchmark: current code baseline"` as the change description for display purposes. (Infra fixes are still allowed when a gap blocks the run — upgrading the SDK / replay script in `detect-replay-capabilities`, or adding `mockOnReplay` to a failing child span below — since none of those change the function's measured behavior. What you must not do is edit the traced function to alter its output.)
 
@@ -723,7 +733,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    **Route on whether replay trace IDs are available.** Check the `hasTraceIds` flag from `replay-against-dataset` (this confirms the tentative `supportsReplayTraceIds` flag from `detect-replay-capabilities`). This determines whether verdicts can be persisted to the server and whether the experiments page in Studio will show meaningful results.
 
-   - **replay trace IDs are populated (`hasTraceIds` is true)** — the SDK and server support trace ID mapping. In non-benchmark modes, open the experiments page in Studio first (so the user can watch verdicts populate in real time), then evaluate and persist labels. In `benchmark` mode no Studio is open, so `open-experiments` self-skips — go straight to evaluating and persisting labels
+   - **replay trace IDs are populated (`hasTraceIds` is true)** — the SDK and server support trace ID mapping. In non-benchmark modes, open the experiments page in Studio first (so the user can watch verdicts populate in real time), then evaluate and persist labels. In `benchmark` mode without the `studio` flag no Studio is open, so `open-experiments` self-skips: go straight to evaluating and persisting labels. In `benchmark` mode with the `studio` flag, `open-experiments` behaves like other modes
    - **replay trace IDs are null (`hasTraceIds` is false)** — tell the user: "Your SDK doesn't support replay trace IDs, so experiment results can't be persisted to Studio or compared across iterations. Upgrade your SDK and run `$bitfab:setup replay` to regenerate the script. Evaluating in-agent for now." Then proceed to text-only evaluation so the user still sees comparison results in-agent, without the Studio experiments page
 10. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
@@ -793,7 +803,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    **Open experiment viewer (fallback).** This step only runs when replay trace IDs are available (routed here from `check-trace-id-support`). If no `testRunId`s were captured, skip this step and continue to evaluate.
 
-   **In `benchmark` mode, skip this step entirely** (no Studio is open). This step's `next` goes to `evaluate-results`, which in benchmark mode scores the items, persists verdicts, and then routes to the terminal benchmark scorecard. (The numbered position of this step in the rendered list does not reflect run order — follow the `next` routing, not the list sequence.)
+   **In `benchmark` mode without the `studio` flag, skip this step entirely** (no Studio is open). With the `studio` flag, benchmark behaves like the other modes below: skip if the experiments page was already opened via `experimentGroupId` in `open-experiments-before-replay`, otherwise navigate with the collected `testRunId`s. Either way this step's `next` goes to `evaluate-results`, which in benchmark mode scores the items, persists verdicts, and then routes to the terminal benchmark scorecard. (The numbered position of this step in the rendered list does not reflect run order: follow the `next` routing, not the list sequence.)
 
    If the experiments page was already opened via `experimentGroupId` in `open-experiments-before-replay` (`supportsExperimentGroups` is true), skip this step entirely, the page is already showing live results.
 
@@ -803,7 +813,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" "/studio/experiments?testRunIds=<testRunId1>,<testRunId2>,<testRunId3>"
    ```
 
-   The command navigates an existing session or opens a new one automatically.
+   In `benchmark` mode (with the `studio` flag), append `&mode=benchmark` here too so the page shows benchmark terminology. The command navigates an existing session or opens a new one automatically.
 14. **Run only when mode is `wizard`, `dataset`, `experiment` or `investigate`.**
 
    **Share results to the user.**
@@ -891,6 +901,8 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    Use ✅ for pass-verdict rows (fixed, still-passing), ❌ for fail-verdict rows (regression, still-failing), ⚠️ for unreplayable, and ⏭️ for skipped (an item you explicitly marked `skip: true` in `evaluate-results` because the output was genuinely ambiguous). Keep `Detail` to one short line per row (truncate long annotations/outputs). Keep **both `unreplayable` and `skipped` out of the pass-rate denominator.** Define the counts explicitly: `T` = total traces in the dataset; `U` = unreplayable; `S` = skipped; `scorable` = `T − U − S` (the items that got a real pass/fail verdict); `X` = the count that passed (✅ fixed + ✅ still-passing). `Pass rate` = `X / scorable` (so the summary table's "X/scorable" uses these exact numbers). **If `scorable` is 0** (every trace was unreplayable or skipped, so nothing got a real verdict), report `Pass rate` as `N/A (0 scorable)` instead of `0/0`, and add a line that no trace could be scored this run. If `U > 0`, add one line under the tables naming the cause (missing DB rows, FK violation, env mismatch). Omit the `Skipped` summary row and any skipped table rows entirely when `S` is 0.
 
    **If running in text-only mode** (trace IDs were unavailable): append a one-line note under the tables that persistent results require upgrading to `@bitfab/sdk` 0.13.6+.
+
+   **If this run opened Studio** (the `studio` opt-in was passed), kill the Studio background process now (send SIGINT or abort the background task) before continuing to cleanup, so the long-running `openStudioTo.js` poller doesn't outlive the run. `closeStudio.js` in the cleanup step closes the Studio tab but does not stop that background process. If no Studio was opened (terminal-only benchmark), skip this.
 
    This is a terminal step. Report the scorecard and stop. Do not offer to iterate or make changes (the user can run `$bitfab:assistant experiment <key>` separately if they want to fix failures).
 
