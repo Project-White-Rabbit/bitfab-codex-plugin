@@ -51,7 +51,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 |---|---|
 | `$bitfab:setup` or `$bitfab:setup wizard` | Run login, then instrument + replay (together per workflow) |
 | `$bitfab:setup explain` | Explain what Bitfab is and what each mode does (read-only, no login) |
-| `$bitfab:setup login` | Authenticate via browser OAuth and retrieve API key |
+| `$bitfab:setup login` | Authenticate for setup/instrumentation (Studio/assistant flows log in inline, no pre-login) |
 | `$bitfab:setup instrument` | Instrument AI workflows with Bitfab tracing |
 | `$bitfab:setup modify` | Modify an existing trace setup (add context, change depth, or move the root) |
 | `$bitfab:setup inspect` | Diagnose (and offer to fix) your tracing setup: auth, what's instrumented, plugin/SDK freshness, replay coverage, trace arrival |
@@ -65,7 +65,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 | Command | Description |
 |---------|-------------|
 | `status.js` | Check plugin authentication and connection status |
-| `login.js` | Authenticate via browser OAuth (blocks until complete) |
+| `login.js` | Authenticate for setup/instrumentation; standalone browser OAuth (blocks). Studio, dataset, and experiment flows log in inline and need no pre-login. |
 | `openTracePlan.js <planId>` | Open the trace plan confirmation UI in Studio (blocks until user confirms or cancels) |
 | `waitForTrace.js <trace-function-key>` | Poll for the first trace to arrive (blocks up to ~10 min) |
 | `startTemplatePreview.js <functionKey>` | Open the template editor preview in Studio (blocks until user clicks Done) |
