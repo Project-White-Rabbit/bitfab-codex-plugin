@@ -10,6 +10,8 @@ description: "Set up and maintain Bitfab tracing for AI features. TRIGGER when: 
 - Present 2-5 concrete options
 - One decision per question — never batch
 
+**Studio gate recovery (applies to every Studio-opening command).** Any command that opens or navigates Studio (`openTracePlan.js`, `startTemplatePreview.js`, etc.) emits `{"event":"not-responding","sessionId":"..."}` and exits non-zero when a Studio session is recorded but its window can't be reached (a crash, sleep, or a close no process witnessed). It will NOT open a duplicate window. **This is a gate, not a failure to retry blindly.** Recommend the user refresh or reopen the Studio tab, then ask the user with two options: **Try again** (re-run the same command — the record is still on disk, so a window that came back gets reused) or **Open a new Studio** (run `node "${BITFAB_PLUGIN_DIR}/dist/commands/clearStudioSession.js"` to drop the stale pointer, then re-run the command, which now opens a fresh window). Only clear the pointer after the user approves.
+
 **🚨 Blocking-process rule (applies to any plugin command described as "blocks until the user does X"):** When you launch a plugin CLI that blocks on a Studio interaction (`login.js`, `startDataset.js`, `openTracePlan.js`, etc.), you MUST keep the exec session alive and keep polling it until the process exits on its own.
 
 - The process opens Studio (or navigates an existing Studio session) and polls for the user's action via agent session events. It exits only after the user completes the action in Studio (or after the timeout).
@@ -70,6 +72,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 | `waitForTrace.js <trace-function-key>` | Poll for the first trace to arrive (blocks up to ~10 min) |
 | `startTemplatePreview.js <functionKey>` | Open the template editor preview in Studio (blocks until user clicks Done) |
 | `closeStudio.js <sessionId>` | Close the Studio browser tab for an agent session |
+| `clearStudioSession.js` | Clear the stale active-Studio pointer so the next open starts fresh |
 | `update.js <mode>` | Check plugin + SDK versions and install the latest (used by inspect to detect and fix staleness) |
 
 ## Preamble

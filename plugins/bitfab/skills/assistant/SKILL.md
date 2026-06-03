@@ -55,10 +55,11 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 | Command | Description |
 |---------|-------------|
 | `status.js` | Check plugin authentication and connection status |
-| `openStudioTo.js <path> [studioSessionId]` | Navigate an existing Studio session or open a new one at the given path |
+| `openStudioTo.js <path>` | Navigate an existing Studio session or open a new one at the given path |
 | `pushActivity.js {action} "{displayName}"` | Emit activity events to the Studio sidebar |
 | `persistReplayLabels.js <verdicts-file>` | Persist replay verdicts from a JSON file to Bitfab via MCP |
 | `closeStudio.js <sessionId>` | Close the Studio browser tab for an agent session |
+| `clearStudioSession.js` | Clear the stale active-Studio pointer so the next open starts fresh |
 
 ## Phase 0: Setup
 
@@ -92,27 +93,29 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 
 The Studio is the companion browser surface for the entire assistant flow. It opens once at the start and stays open throughout all phases. Individual phases navigate the Studio to the relevant page (dataset review, experiment viewer, etc.) using `openStudioTo.js`.
 
-**`openStudioTo.js` handles session resolution automatically.** The `sessionId` argument is optional. When called:
-1. If a `sessionId` is provided, it tries that session first.
-2. If that fails (or no `sessionId` was given), it checks for an active Studio session in this worktree.
-3. If no active session exists, it opens a **new** Studio window at the target path.
+**`openStudioTo.js` handles session resolution automatically.** It takes a single `<path>` argument and reads auth from your local config. The active Studio session is the single source of truth on disk:
+1. If an active session is recorded, it navigates that window to the path and reuses it.
+2. If none is recorded, it opens a **new** Studio window at the path.
+
+It never opens a second window while a session is recorded: it either reuses it or gates. A clean tab close or a deliberate end clears the record, so the next open is simply a fresh window.
 
 Output events:
-- `{"event":"navigated","sessionId":"...","path":"..."}` — success (existing or new session).
-- `{"event":"not-responding","sessionId":"...","path":"..."}` — an active session exists but didn't respond. **This is a gate.** Recommend the user refresh the Studio tab in their browser, then ask the user with two options: **Try again** (you retry `openStudioTo.js <path>`, the session is still on disk so the retry finds it) or **Open a new Studio** (run `openStudioTo.js --new <path>` to open a fresh window).
+- `{"event":"navigated","sessionId":"...","path":"..."}` — reused an existing session.
+- `{"event":"started","sessionId":"..."}` — opened a new Studio window.
+- `{"event":"not-responding","sessionId":"..."}` — a recorded session exists but the window did not respond (the navigation retries via ping-pong before reporting this, so the tab was pinged twice and never answered). **Every** Studio-opening command emits this on a stale session (`openStudioTo.js` and the dataset/experiment/trace-plan commands alike), and none of them opens a duplicate window. **This is a gate.** Recommend the user refresh or reopen the Studio tab in their browser, then ask the user with two options: **Try again** (re-run the command that gated — the record is still on disk, so a window that came back gets reused) or **Open a new Studio** (run `node "${BITFAB_PLUGIN_DIR}/dist/commands/clearStudioSession.js"` to drop the stale record, then re-run the command, which now opens a fresh window). Only clear the record after the user approves.
 - `{"event":"open-failed","sessionId":"...","reason":"..."}` — failed to open a new Studio. Surface the error.
 
-`openStudioTo.js` only emits `not-responding` (the gate) when the previous window went unreachable with **no close signal** — a crash, sleep, or a tab close no process witnessed. If the tab was closed cleanly it opens a fresh Studio immediately (no handshake, no prompt), and if the session was **deliberately ended** ("return to agent & close") it tries to reconnect once and, failing that, opens a fresh one silently. So the gate fires only when a window might genuinely still be alive and recoverable.
+The gate fires only when a recorded window went unreachable with **no close signal** — a crash, sleep, or a tab close no process witnessed. A cleanly closed or deliberately ended session leaves no record, so the next open just opens fresh (no handshake, no prompt).
 
 **Never use Playwright, `open`, `chrome-testing`, or any other browser automation to open Studio pages.** Always use `openStudioTo.js` which handles auth and session management.
 
 1. Open Studio at the initial path for this mode. `openStudioTo.js` is the single entry point for all Studio operations: it navigates an existing session or opens a new one automatically.
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" <path> [studioSessionId]
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" <path>
    ```
 
-   Normally omit `studioSessionId` — the command resolves this agent's active session on its own. Pass it only to reconnect to a specific Studio session (e.g. the id from a disconnect popup's reconnect prompt).
+   The command resolves this agent's active session on its own and reads auth from local config — no session id or credentials to pass.
 
    **The path MUST start with `/studio`.** Never pass `/`, a bare URL, or any path outside the `/studio/` route tree.
 
