@@ -122,7 +122,7 @@ The gate fires only when a recorded window went unreachable with **no close sign
    **The path MUST start with `/studio`.** Never pass `/`, a bare URL, or any path outside the `/studio/` route tree.
 
    - **`wizard` mode:** pass `/studio`
-   - **`dataset <key>` mode:** pass `/studio/trace-functions/<key>/datasets/labeled`
+   - **`dataset <key>` mode:** pass `/studio` (Phase 3's "Open the dataset review page" step navigates to the chosen dataset's own page once the datasetId is held; there is no function-level dataset page)
    - **`experiment <key>` mode:** pass `/studio`
    - **`investigate [<key>]` mode:** pass `/studio`
    - **`benchmark <key>` mode:** only when the run opted in with the `studio` keyword (the working-context flag from argument routing): pass `/studio`. Without the flag, benchmark is terminal-only: do NOT run `openStudioTo.js` at all, skip straight to `phase-5/pick-dataset` (the step's `next` already routes there)
@@ -366,6 +366,8 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    ```
 
    The command navigates an existing session or opens a new one automatically.
+
+   **This navigation is mandatory even though Studio is already open.** The initial mode open lands on `/studio` (the home), not this dataset's page. Labels and traces stream live only into the per-dataset page above, so a Studio session sitting anywhere else does NOT satisfy this step. Always navigate with the `<datasetId>` path once you hold the id.
 
    **After opening, check whether the dataset already has traces.** Call `mcp__Bitfab__search_traces` with `traceFunctionKey: <key>`, `datasetId: <datasetId>`, `limit: 1` to see if the dataset is populated.
 
