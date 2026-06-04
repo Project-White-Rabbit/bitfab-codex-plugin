@@ -236,11 +236,11 @@ Bitfab captures every AI function call — inputs, outputs, and errors — so yo
 2. **Search for existing SDK usage** (`withSpan`, `@span`, `bitfab_span`, `client.Span`, `getFunction`, `get_function`, etc.). In a monorepo, search **each application directory separately** — a root-level search can miss subdirectories.
    - If found: list the trace function keys, then ask the user:
 
-   > A) **Search for more workflows** — find uninstrumented gaps *(recommended)*
-   > B) **Modify an existing trace setup** — jump to the Modify phase
-   > C) **Continue** — skip to replay
+   > A) **Search for more workflows** — find uninstrumented gaps *(recommended)* → step 3
+   > B) **Modify an existing trace setup** — jump to the Modify phase → step 1 of the Modify phase
+   > C) **Continue** — done instrumenting → step 1 of the Replay phase (mode `wizard`); otherwise step 1 of the Cleanup phase
 
-     If "Modify", jump to the Modify phase. If "Continue", skip to Replay.
+     If "Modify", jump to the Modify phase. If "Continue", follow the option's destination: Replay in `wizard` mode, Cleanup otherwise.
    - **If usage routes through a project-local shim** (a wrapper file that re-exports `withSpan` / `@span` / `bitfab_span` / `getCurrentTrace` / `getCurrentSpan` with custom init, often named `lib/bitfab.*` or after a predecessor SDK such as `lib/simforge.*`), audit the shim before instrumenting anything new. The shim must (a) construct the SDK client (`new Bitfab(...)`, `bitfab_init()`, `Bitfab::Client.new`, etc.) at module load, **synchronously**, never lazily inside the wrapped function; and (b) hand off to the SDK call synchronously, with no `await` between the user's entry to the shim and `client.withSpan(...)` / `@bitfab.span(...)`. Lazy or async client init (e.g. `await getOrCreateTraceFunction(key)` inside the wrapped body) breaks the SDK's nesting context (TypeScript `AsyncLocalStorage`, Python `contextvars`) under any parallel fan-out (`Promise.all`, `Promise.allSettled`, `asyncio.gather`, parallel workers): every span becomes its own top-level trace instead of nesting inside its caller. Fix the shim before instrumenting anything new. (Direct callers of the SDK with no shim already satisfy this rule, skip the audit.)
    - If not found: **proceed to step 3** — no SDK usage does NOT mean nothing to instrument, it means the SDK hasn't been installed yet. NEVER conclude "nothing to instrument" before completing step 6.
 3. Use the API key from the Login phase (or retrieve it now if already authenticated)
@@ -324,10 +324,10 @@ Bitfab captures every AI function call — inputs, outputs, and errors — so yo
 12. Tell the user how to run the app to generate the first trace AND, once traces exist, how to run the replay script for this pipeline — give exact command(s) for both. Do NOT run them yourself. (Omit the replay command for Go-only projects.)
 13. **MANDATORY STOP — never silently end the cycle without the A/B/C/D prompt.** Ask the user (we recommend **A**: generate traces before instrumenting the next workflows):
 
-   > A) **Generate traces [current workflow]** *(recommended)*
-   > B) **Instrument [next workflow]** — [why it's the next highest value]
-   > C) **Instrument [other workflow]** — [alternative]
-   > D) **Done instrumenting** — proceed to Replay (in `wizard` mode) / Done (in `instrument` mode)
+   > A) **Generate traces [current workflow]** *(recommended)* → step 8
+   > B) **Instrument [next workflow]** — [why it's the next highest value] → step 8
+   > C) **Instrument [other workflow]** — [alternative] → step 8
+   > D) **Done instrumenting** — proceed to Replay (in `wizard` mode) / Done (in `instrument` mode) → step 1 of the Replay phase (mode `wizard`); otherwise step 1 of the Cleanup phase
 
    **For option A**, present the script to run to the user (allow them to let you run it for them). Before starting the wait, tell the user verbatim: `Polling for first trace (up to ~10 min) — press Esc to cancel.` Then run in a shell (allow up to ~11 min): `node "${BITFAB_PLUGIN_DIR}/dist/commands/waitForTrace.js" <trace-function-key>`. The command blocks inside Node — polling Bitfab every 10s until a trace lands or the ~10 min timeout fires — so no agent tokens are burned while waiting. When it exits, parse the final stdout line as JSON: `{"status":"found","traceId":"…","url":"…"}` → report the trace URL; `{"status":"timeout",…}` → note that no trace arrived yet; `{"status":"interrupted",…}` → the user cancelled.
 
@@ -395,17 +395,17 @@ Every Modify cycle targets **exactly one** trace function. Never batch multiple 
 
    **Inline fallback** (use only if `mcp__Bitfab__create_trace_plan` errors, e.g. offline or MCP unreachable, or `openTracePlan.js` exits non-zero): present an inline before/after diff using the Default view template from the **Trace Plan Format** reference section, list `Files changed:` (paths only, no annotations), and **STOP** — ask the user:
 
-   > A) **Proceed** — apply the diff using the confirmed capture set *(recommended)*
-   > B) **Expand details** — re-render the inline diff in the expanded view (fallback only)
-   > C) **Modifications** — ask what the user wants to change, then return to building the modified plan
-   > D) **Abort entirely** — drop this cycle without writing edits
+   > A) **Proceed** — apply the diff using the confirmed capture set *(recommended)* → step 6
+   > B) **Expand details** — re-render the inline diff in the expanded view (fallback only) → step 5
+   > C) **Modifications** — ask what the user wants to change, then return to building the modified plan → step 4
+   > D) **Abort entirely** — drop this cycle without writing edits → step 1 of the Cleanup phase
 6. **Apply the changes — purely additive to behavior.** Same rules as Instrument step 11: never change arguments, return values, error handling, variable names, types, control flow, or code structure. Removing a `withSpan`/`@span` wrapper is the only structural edit allowed, and only when it leaves the wrapped call, its arguments, and its return value untouched. The trace function key from step 2 stays the same — do not rename keys. Batch repetitive edits in parallel (one message, many Edit calls).
 7. Tell the user how to run the app to generate a trace with the modified setup — exact command(s). Do NOT run it yourself. Then **MANDATORY STOP** — ask the user:
    > We recommend **A**: generate a trace with the modified setup so the diff is observable end-to-end.
 
-   > A) **Generate a trace for the modified setup** — present the script to run; allow the user to let you run it *(recommended)*
-   > B) **Modify another trace function** — returns to step 2
-   > C) **Done** — stop here
+   > A) **Generate a trace for the modified setup** — present the script to run; allow the user to let you run it *(recommended)* → step 1 of the Cleanup phase
+   > B) **Modify another trace function** — returns to step 2 → step 2
+   > C) **Done** — stop here → step 1 of the Cleanup phase
 
    B returns to step 2. A and C exit the Modify loop. After exit, stop (Modify does not auto-continue to Replay — the user can invoke `$bitfab:setup replay` separately).
 
@@ -466,8 +466,8 @@ This is about trace *delivery and setup health* (is the SDK wired up and current
    Then continue to the fix prompt. Inspect does not open Studio.
 6. If the report surfaced anything stale or missing (plugin behind, SDK out of date or on the legacy `bitfab` package, or replay scripts missing/incomplete), ask the user whether to apply them — each fix is then confirmed individually in the next step (nothing is changed blanket). If everything is healthy, skip the question and go straight to cleanup.
 
-   > A) **Review and apply fixes** — go through each fix one at a time, confirming before any change *(recommended)*
-   > B) **Just report** — make no changes
+   > A) **Review and apply fixes** — go through each fix one at a time, confirming before any change *(recommended)* → step 7
+   > B) **Just report** — make no changes → step 1 of the Cleanup phase
 7. **Apply fixes individually — confirm each before changing anything; never bundle them into one blanket change.** Go through only the items step 4 flagged as stale or missing, and for each, ask the user (one decision per question) and apply only if the user approves. Skip any they decline and continue to the next.
 
    - **Plugin behind** — ask the user to update; if yes, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/update.js" plugin` and remind the user to restart Codex so the new plugin loads.
@@ -541,9 +541,9 @@ Replay scripts let the team regression-test any trace function against productio
    - Live in a `scripts/` directory (or the project's existing scripts location)
 5. **Safety net for legacy instrumentation.** If an already-instrumented function (introduced before step 6's serializability gate, or via another path) can't be invoked from the replay script — most commonly because it isn't exported, is defined inline in a route handler, or takes unserializable inputs — ask the user offering step 6's two resolutions:
 
-   > A) **Move trace boundary inward**
-   > B) **Refactor** *(recommended)*
-   > C) **Leave as-is** — add a header comment noting why the function isn't callable and flag that the script will rot
+   > A) **Move trace boundary inward** → step 1 of the Cleanup phase
+   > B) **Refactor** *(recommended)* → step 1 of the Cleanup phase
+   > C) **Leave as-is** — add a header comment noting why the function isn't callable and flag that the script will rot → step 1 of the Cleanup phase
 
    Reason from the function's signature and visibility; do not execute the script to detect this. **If the user picks "Refactor" (or a boundary move that requires rewriting callers), apply the "Refactor confirmation" rule below — present a refactor plan labeled as *visibility* or *structural* and get a second confirmation before modifying code.**
 
@@ -564,8 +564,8 @@ Templates control how a span's input / output renders in the Bitfab UI. They are
    3. Present a compact list in the question text showing only: `<key>` · `<repo marker + path>`. No invented summaries.
    4. Ask the user with 2 options: the recommended function (prefer ✅ instrumented here, and matching session context when one is clearly relevant) and a free-text "Type a function key" option. If nothing is instrumented in this repo, say so explicitly in the question, don't hide it.
 
-   - **argument supplied** — use it as the trace function key and continue
-   - **no argument** — list trace functions, ask the user, then continue with the chosen key
+   - **argument supplied** — use it as the trace function key and continue → step 2
+   - **no argument** — list trace functions, ask the user, then continue with the chosen key → step 2
 2. Call `mcp__Bitfab__get_template_reference` **once** before any edit. It returns a stable agent-facing schema for Bitfab span templates: the rendering engine (Nunjucks, Jinja2-compatible), the render-context shape (top-level keys, `SpanData` / `ParsedSpanData`), the registered custom filters and tests, common patterns from the live default templates, and error-fallback behavior. Without this you cannot write a correct edit; references to undeclared variables silently render empty in production.
 
    Hold the reference in your working context for the rest of the loop. Do NOT call it again on subsequent edits.
@@ -574,8 +574,8 @@ Templates control how a span's input / output renders in the Bitfab UI. They are
 
    Call `mcp__Bitfab__search_traces` with `{ traceFunctionKey: "<key>", limit: 1 }`. If the response contains a trace ID, continue. If the response indicates no traces exist (e.g. `No traces found matching the filter criteria.`), exit and tell the user in one short line: `No traces yet for <key>. Run your app (or the replay script) to generate one, then re-run \`$bitfab:setup templates <key>\` to preview.` Do NOT block waiting; the user re-invokes when they have a trace.
 
-   - **trace exists** — continue and open the preview
-   - **no traces yet for this function** — exit and tell the user to generate a trace and re-run
+   - **trace exists** — continue and open the preview → step 5
+   - **no traces yet for this function** — exit and tell the user to generate a trace and re-run → step 1 of the Cleanup phase
 5. Launch the preview command **in the background** so the agent can keep iterating while the page stays open:
 
    ```bash
@@ -614,9 +614,9 @@ Templates control how a span's input / output renders in the Bitfab UI. They are
 
    Two ways the loop ends:
 
-   - **background process exited (user clicked Close)** — exit the loop and acknowledge that template editing is done
-   - **user explicitly says they're done** — exit the loop and acknowledge
-   - **user wants another change** — loop back and apply the next edit
+   - **background process exited (user clicked Close)** — exit the loop and acknowledge that template editing is done → step 1 of the Cleanup phase
+   - **user explicitly says they're done** — exit the loop and acknowledge → step 1 of the Cleanup phase
+   - **user wants another change** — loop back and apply the next edit → step 6
 
 ## Cleanup
 

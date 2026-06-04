@@ -178,10 +178,10 @@ Check that this trace function has both instrumentation and a replay script.
 
    > "I can't find `<traceFunctionKey>` in this codebase — it may be instrumented in another repo or under a different key."
    >
-   > A) **Instrument now** — set up tracing in this codebase *(recommended)*
-   > B) **Continue anyway** — work with the traces even without local code
-   > C) **Pick a different function**
-   > D) **Stop**
+   > A) **Instrument now** — set up tracing in this codebase *(recommended)* → step 1 of the Cleanup phase
+   > B) **Continue anyway** — work with the traces even without local code → step 1 of the Phase 3: Pick a Dataset and Label Traces phase
+   > C) **Pick a different function** → step 1 of the Phase 1: Identify the Trace Function phase
+   > D) **Stop** → step 1 of the Cleanup phase
 
    If the user chooses **"Instrument now"**, tell the user to run `$bitfab:setup instrument` first, then come back with `$bitfab:assistant wizard <key>`. Do NOT invoke the setup skill from within this flow; it will break the assistant flow's continuity. If **"Continue anyway"**, skip the replay-script check and start building the dataset — there's no local code to iterate on yet.
 2. Search for a replay script that covers this trace function:
@@ -195,9 +195,9 @@ Check that this trace function has both instrumentation and a replay script.
 
    > "No replay script found for `<traceFunctionKey>`."
    >
-   > A) **Create replay now** — create the replay script inline *(recommended)*
-   > B) **Pick a different function**
-   > C) **Stop**
+   > A) **Create replay now** — create the replay script inline *(recommended)* → step 3
+   > B) **Pick a different function** → step 1 of the Phase 1: Identify the Trace Function phase
+   > C) **Stop** → step 1 of the Cleanup phase
 
    If the user chooses **"Create replay now"**, create the replay script inline: fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript#replay` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk#replay`), then write a new replay script following the template. The script must accept `--limit N`, `--trace-ids`, `--code-change <path>`, and `--experiment-group-id <uuid>` flags, and emit the full `ReplayResult` as JSON to stdout per the Replay Output Contract. Do NOT invoke `$bitfab:setup replay` as a separate skill. After creating the script, check its capabilities.
 3. **Detect replay script capabilities.** Check what the replay script supports. These flags determine how experiment results are tracked and displayed in Phase 5. **If you already ran this step for the same trace function earlier in this session, skip it and continue. Re-run if the user switched functions via "Pick a different function".**
@@ -231,8 +231,8 @@ Check that this trace function has both instrumentation and a replay script.
    > [if !supportsExperimentGroups] **Experiment groups**: no live streaming; results appear in Studio after each run
    > [if !supportsReplayTraceIds] **Replay trace IDs**: experiment results can't be persisted or compared across iterations (your SDK needs an upgrade)"
 
-   > A) **Upgrade the replay script** — regenerate the script with full support, then continue *(recommended)*
-   > B) **Continue without** — run experiments with the current script; missing features are skipped
+   > A) **Upgrade the replay script** — regenerate the script with full support, then continue *(recommended)* → step 4
+   > B) **Continue without** — run experiments with the current script; missing features are skipped → step 6 of the Phase 5: Iterate with Replay phase (mode `experiment`); step 7 of the Phase 5: Iterate with Replay phase (mode `benchmark`); stop (mode `add-trace`); otherwise step 1 of the Phase 3: Pick a Dataset and Label Traces phase
 4. **Upgrade the SDK and replay script.** The replay script references SDK APIs (`experimentGroupId`, `codeChangeDescription`, per-item `traceId`) that require a recent SDK. Upgrade the SDK first, then regenerate the script.
 
    **1. Upgrade the SDK.** Read the resolved version from the lockfile (`pnpm-lock.yaml`, `poetry.lock`, `uv.lock`, `Gemfile.lock`) and compare against the latest. If outdated, run the package manager's update command:
@@ -284,9 +284,9 @@ Reached only from `investigate` mode. The user is describing an issue they want 
 
    Then ask the user for the next step. Recommend based on what the investigation surfaced: option C (dataset) if the findings include reproducible failures worth labeling and iterating on, option B (report) if the user will need to share or revisit the findings later, option A (stop) if the question was a one-off and the chat summary already answers it.
 
-   > A) **Stop here** — the in-chat summary is enough; no further artifact
-   > B) **Write an analysis report** — save the findings to a markdown file I can share or revisit later
-   > C) **Build a labeled dataset** — use these traces as seed candidates and label them so we can iterate against them later *(recommended)*
+   > A) **Stop here** — the in-chat summary is enough; no further artifact → step 1 of the Cleanup phase
+   > B) **Write an analysis report** — save the findings to a markdown file I can share or revisit later → step 4
+   > C) **Build a labeled dataset** — use these traces as seed candidates and label them so we can iterate against them later *(recommended)* → step 1 of the Phase 3: Pick a Dataset and Label Traces phase
 
    If the user picks option A, kill the Studio background process (send SIGINT or abort the background task) before stopping, so it doesn't linger as an orphan. Option B kills Studio on exit (the report step). Option C continues through dataset building, diagnosis, and experiments, with Studio staying open throughout; Phase 6 kills it at wrap-up.
 4. Write a markdown report capturing the investigation. Path: `.bitfab/analysis/<traceFunctionKey>-<YYYY-MM-DD-HHmm>.md` (create the `.bitfab/analysis/` directory if missing; fall back to a path under the repo root or `os.tmpdir()` if the project root isn't writable). Use the `Write` tool with this structure:
@@ -334,9 +334,9 @@ Reached only from `add-trace` mode. This is the lightweight path: attach one or 
    Hold the (single, verified) function key, the trace IDs that belong to it, and any dataset ID in working context. Do **not** grep the codebase — this mode never touches local code.
 2. **Pick or create the dataset to attach to.** If no dataset ID was supplied, call `mcp__Bitfab__list_datasets` with the function key first. Hold the chosen `datasetId` in working context.
 
-   - **a dataset ID was supplied in the invocation** — use it directly, but first confirm it's scoped to the verified function key — call `mcp__Bitfab__list_datasets` with the key and check the supplied id is in the result. If it is, continue to attach. If it isn't (the dataset belongs to a different function, so `mcp__Bitfab__add_traces_to_dataset` would skip every trace), stop and ask the user — name the mismatch and offer to pick a correctly-scoped dataset instead
-   - **no datasets exist for this function (`list_datasets` returned empty)** — **don't ask** — silently call `mcp__Bitfab__create_dataset` with `traceFunctionKey: <key>` and `name: <key>`. Hold the returned `datasetId` and continue
-   - **one or more datasets already exist** — present them as a numbered choice, one option per existing dataset (name · id · current trace count) plus a "Create new" option. Recommend the most recently used dataset that has traces. On an existing pick, hold its id. On "Create new", silently call `mcp__Bitfab__create_dataset` with `name: "<key> #N"` (N one more than the existing count) — don't ask for a name. Hold the id and continue
+   - **a dataset ID was supplied in the invocation** — use it directly, but first confirm it's scoped to the verified function key — call `mcp__Bitfab__list_datasets` with the key and check the supplied id is in the result. If it is, continue to attach. If it isn't (the dataset belongs to a different function, so `mcp__Bitfab__add_traces_to_dataset` would skip every trace), stop and ask the user — name the mismatch and offer to pick a correctly-scoped dataset instead → step 3
+   - **no datasets exist for this function (`list_datasets` returned empty)** — **don't ask** — silently call `mcp__Bitfab__create_dataset` with `traceFunctionKey: <key>` and `name: <key>`. Hold the returned `datasetId` and continue → step 3
+   - **one or more datasets already exist** — present them as a numbered choice, one option per existing dataset (name · id · current trace count) plus a "Create new" option. Recommend the most recently used dataset that has traces. On an existing pick, hold its id. On "Create new", silently call `mcp__Bitfab__create_dataset` with `name: "<key> #N"` (N one more than the existing count) — don't ask for a name. Hold the id and continue → step 3
 3. **Attach raw, then stop.** Call `mcp__Bitfab__add_traces_to_dataset` once with the `datasetId` from the previous step and the full array of trace IDs. The call is idempotent, so re-attaching IDs already in the dataset is a safe no-op. Do **not** call `mcp__Bitfab__update_agent_labels` — this mode attaches traces without labels.
 
    **Report the tool's actual result, not the input count.** `mcp__Bitfab__add_traces_to_dataset` returns how many traces were added vs skipped (IDs not in the org, or not on the dataset's function, are silently skipped). Read those counts from the response and report the **added** count, not `N = trace-IDs-you-passed`. If any were skipped, say so in the same line (e.g. "2 added, 1 skipped — not on this function").
@@ -355,8 +355,8 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
    **Pick or create a dataset** — Call `mcp__Bitfab__list_datasets` with the trace function key. Then branch on whether any exist. Hold the chosen `datasetId` in working context — every step from here on uses it.
 
-   - **no datasets exist for this function (list_datasets returned empty)** — **don't ask** — silently call `mcp__Bitfab__create_dataset` with `traceFunctionKey: <key>` and `name: <key>` (just the trace function key as the name; the user can rename it later in the UI if they want). Hold the returned `datasetId` and continue. The first-time user shouldn't have to answer a name prompt before they've even seen the dataset.
-   - **one or more datasets already exist** — present them to the user as a numbered choice, with one option per existing dataset (name · id · current trace count) plus a "Create new" option. Recommend the most recently used dataset that has traces. If the user picks an existing dataset, hold its id and continue. If the user picks "Create new", silently call `mcp__Bitfab__create_dataset` with `name: "<key> #N"` where N is one more than the number of existing datasets (e.g. `eval-assistant #2`) — don't ask for a name. Hold the new id and continue.
+   - **no datasets exist for this function (list_datasets returned empty)** — **don't ask** — silently call `mcp__Bitfab__create_dataset` with `traceFunctionKey: <key>` and `name: <key>` (just the trace function key as the name; the user can rename it later in the UI if they want). Hold the returned `datasetId` and continue. The first-time user shouldn't have to answer a name prompt before they've even seen the dataset. → step 2
+   - **one or more datasets already exist** — present them to the user as a numbered choice, with one option per existing dataset (name · id · current trace count) plus a "Create new" option. Recommend the most recently used dataset that has traces. If the user picks an existing dataset, hold its id and continue. If the user picks "Create new", silently call `mcp__Bitfab__create_dataset` with `name: "<key> #N"` where N is one more than the number of existing datasets (e.g. `eval-assistant #2`) — don't ask for a name. Hold the new id and continue. → step 2
 2. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Reviewing dataset"`.
 
    Open the dataset review page for the user **immediately** after picking or creating the dataset. Use `openStudioTo.js` to route Studio to the dataset review page:
@@ -371,8 +371,8 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
    **After opening, check whether the dataset already has traces.** Call `mcp__Bitfab__search_traces` with `traceFunctionKey: <key>`, `datasetId: <datasetId>`, `limit: 1` to see if the dataset is populated.
 
-   - **the dataset already has traces (search returned results)** — The dataset is not empty. Tell the user the dataset page is open with the existing traces, and they can review, approve, or edit labels there. Then go straight to waiting for their review. Do NOT ask how to source new candidates or offer to find more traces. The user should review what's already in the dataset first; they can request more traces via the "Edit with agent" button if needed.
-   - **the dataset is empty (search returned no results)** — The dataset has no traces yet. Tell the user the dataset page is open in a "waiting for traces" state, and that traces will appear there live as you search and add them. Then proceed to find candidate traces.
+   - **the dataset already has traces (search returned results)** — The dataset is not empty. Tell the user the dataset page is open with the existing traces, and they can review, approve, or edit labels there. Then go straight to waiting for their review. Do NOT ask how to source new candidates or offer to find more traces. The user should review what's already in the dataset first; they can request more traces via the "Edit with agent" button if needed. → step 10
+   - **the dataset is empty (search returned no results)** — The dataset has no traces yet. Tell the user the dataset page is open in a "waiting for traces" state, and that traces will appear there live as you search and add them. Then proceed to find candidate traces. → step 3
 3. **Ask how to source candidate traces.** Before searching, decide *where* the candidate traces come from. Three real options:
 
    1. **Define new criteria** — agent searches unlabeled traces shaped by what the user wants to surface. Best when the user has a hypothesis or a specific failure pattern in mind.
@@ -388,9 +388,9 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
    Hold the chosen mode in working context — the next steps branch on it.
 
-   > A) **Define new criteria** — tell me what to find (failure pattern, customer reports, etc.) and I search unlabeled traces
-   > B) **Reuse existing labels for this function** — seed the dataset with traces that already have validated labels, then optionally add more *(recommended)*
-   > C) **Open — you decide** — broad sample with no hypothesis; ignore prior labels for the search shape
+   > A) **Define new criteria** — tell me what to find (failure pattern, customer reports, etc.) and I search unlabeled traces → step 5
+   > B) **Reuse existing labels for this function** — seed the dataset with traces that already have validated labels, then optionally add more *(recommended)* → step 4
+   > C) **Open — you decide** — broad sample with no hypothesis; ignore prior labels for the search shape → step 6
 4. **Seed dataset from existing validated labels.** Reachable only when the user picked Option B in `ask-search-mode`. Pull traces that already have a validated label (human-authored, or agent-authored and human-approved) for this function, attach them to the picked dataset, and route on whether the user also wants to add more.
 
    1. Call `mcp__Bitfab__search_traces` with `traceFunctionKey: <key>`, `validated: true`, and a generous `limit` (50 is the cap). Both `labelResult: true` and `labelResult: false` matter — failures are the hill-climbing signal, but passes anchor the regression boundary. If 50 isn't enough to cover the function's labeled history, run a second call with `labelResult: false` only to bias toward fails first, then a third with `labelResult: true`. De-dupe trace IDs across calls.
@@ -398,8 +398,8 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    3. Call `mcp__Bitfab__add_traces_to_dataset` once with `datasetId` (the one picked in `list-datasets`) and the full deduped trace ID array. The call is idempotent, so re-attaching IDs already in the dataset is a safe no-op.
    4. Briefly summarize for the user: "Seeded the dataset with N reused labels (M fails, K passes). Want me to find more candidates to label, or is this set enough to move on?"
 
-   > A) **Find more candidates to label** — go through the regular intent + search + label flow on top of the reused set
-   > B) **Move on with just the reused set** — skip further labeling; the dataset page is already open with the reused traces streamed in *(recommended)*
+   > A) **Find more candidates to label** — go through the regular intent + search + label flow on top of the reused set → step 5
+   > B) **Move on with just the reused set** — skip further labeling; the dataset page is already open with the reused traces streamed in *(recommended)* → step 10
 5. **Ask what kinds of traces to find** — The user picked "Define new criteria" (or arrived here from the reuse path wanting more). Find out what they're actually trying to surface. The trace function may have thousands of traces; "what should I label?" is the question that makes the rest of this phase useful.
 
    When asking, ask the user with these options (and a free-text fallback so the user can describe something specific):
@@ -414,8 +414,8 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    **Find unlabeled traces** — Search without label filters to find unlabeled traces for the trace function. **Shape the search by the intent captured in the previous step** (or by the prior dataset's existing labels, if any): Option A = filter to traces matching the user's described failure pattern; Option B = filter by the user, session, or time window of the reported incidents; Option C = default sweep (recent, diverse inputs, non-empty outputs). Use `mcp__Bitfab__search_traces` with the relevant filters, then `mcp__Bitfab__read_traces` with `scope: "summary"` to read candidates and identify which are worth labeling — look for diverse inputs, traces that produced output (not empty), and traces that cover different scenarios under the chosen intent. Filter out near-duplicates and uninteresting traces. If every trace is already labeled and attached to this dataset, you can move straight on with no new candidates.
 7. **Ask how the user wants to label** — Before any verdicts go on these candidate traces, ask the user how the user wants to label them. There are exactly two modes, and the answer determines whether you call `mcp__Bitfab__update_agent_labels` at all:
 
-   > A) **Agent labels first, I approve / edit** — agent makes a first pass; you approve or edit each verdict in the labeling page *(recommended)*
-   > B) **I'll label them manually** — no agent verdicts; you label every trace from scratch in the labeling page
+   > A) **Agent labels first, I approve / edit** — agent makes a first pass; you approve or edit each verdict in the labeling page *(recommended)* → step 8
+   > B) **I'll label them manually** — no agent verdicts; you label every trace from scratch in the labeling page → step 9
 
    Recommend Option A — an agent first pass turns the labeling page into a quick approve/edit review. But respect the user's choice: if they pick B, do **not** call `mcp__Bitfab__update_agent_labels` for any of these candidates. They want to label from scratch in the labeling page, with no agent verdicts pre-filled. If no new candidate traces were found in the previous step, skip this question and continue.
 8. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Labeling traces"`.
@@ -450,10 +450,10 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 
    **Template editing during labeling.** The user may ask to edit a template in chat while the Monitor is running (e.g. "change the LLM view"). This arrives as a user message, not a Studio event. If so, go to the edit-template-loop step. **Do NOT invoke `$bitfab:setup templates`** — that navigates Studio away from the dataset page.
 
-   - **`event: edit-with-agent`** — user clicked Edit with agent on the dataset page. Go to the modify loop, then come back here to read the next event
-   - **`event: return-to-agent`** — user clicked Done on the dataset page. Dataset review is complete, move on to build + confirm the dataset
-   - **`event: session-ended`** — user closed Studio. Stop the flow
-   - **user asks to edit a template in chat** — user wants to change how traces render (e.g. 'edit the llm template', 'change the function view'). Go to the edit-template-loop, then come back here
+   - **`event: edit-with-agent`** — user clicked Edit with agent on the dataset page. Go to the modify loop, then come back here to read the next event → step 11
+   - **`event: return-to-agent`** — user clicked Done on the dataset page. Dataset review is complete, move on to build + confirm the dataset → step 13
+   - **`event: session-ended`** — user closed Studio. Stop the flow → step 1 of the Cleanup phase
+   - **user asks to edit a template in chat** — user wants to change how traces render (e.g. 'edit the llm template', 'change the function view'). Go to the edit-template-loop, then come back here → step 12
 11. **Modify loop: add or remove traces in chat** — The dataset page is still open in Studio and the user wants you to add or remove traces. Ask in plain chat:
 
    > What would you like to add or remove? You can describe by criteria (e.g. "drop empty-output traces", "add 5 more from last week with errors") or paste explicit trace IDs.
@@ -479,8 +479,8 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
 13. **Build the dataset** — You already know the trace IDs in this dataset (you attached them in earlier steps and tracked any add/remove from modify rounds). Call `mcp__Bitfab__read_traces` with all of them and `scope: "full"` to load the labels + annotations into context. This is the working set for confirm + every Phase 5 experiment.
 14. **Confirm the dataset** — Present the dataset as a numbered choice: each entry showing (trace ID, label, annotation summary). The dataset must contain at least one **validated failing label** — i.e. at least one trace where a human either authored or approved a `false` label. To check, call `mcp__Bitfab__search_traces` restricted to the dataset trace IDs with `validated: true` and `labelResult: false`. Two outcomes:
 
-   - **gate fails (no validated failing label — search returns nothing)** — tell the user and loop back to find or label more unlabeled traces
-   - **gate passes (at least one validated failing label)** — get explicit approval, then continue
+   - **gate fails (no validated failing label — search returns nothing)** — tell the user and loop back to find or label more unlabeled traces → step 6
+   - **gate passes (at least one validated failing label)** — get explicit approval, then continue → step 15
 
    Unapproved agent labels do **not** satisfy this gate by design — `validated: true` excludes them.
 15. **Hold in-context** — This approved dataset is the benchmark for all experiments in Phase 5. Keep both the `datasetId` and the trace IDs in your working context throughout.
@@ -549,8 +549,8 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
       - In `experiment` mode, the dataset must have **≥1 validated failing label** (there has to be something to fix).
       - In `benchmark` mode, the dataset just needs **≥1 trace** — benchmark replays the entire dataset against the current code regardless of label mix (an all-passing dataset is a valid regression baseline).
 
-   - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset fails the mode's usability gate (experiment: no validated failing labels; benchmark: no traces at all)** — tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; kill the Studio background process if one was opened (none in benchmark mode unless the `studio` flag was passed); then stop the flow
-   - **dataset loaded (experiment: ≥1 validated failing label; benchmark: ≥1 trace)** — summarize the dataset for the user (counts of pass/fail) and the failure annotations. In `experiment` mode, pick a first experiment from the failure patterns. In `benchmark` mode, confirm the dataset and proceed to replay the full set
+   - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset fails the mode's usability gate (experiment: no validated failing labels; benchmark: no traces at all)** — tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; kill the Studio background process if one was opened (none in benchmark mode unless the `studio` flag was passed); then stop the flow → step 1 of the Cleanup phase
+   - **dataset loaded (experiment: ≥1 validated failing label; benchmark: ≥1 trace)** — summarize the dataset for the user (counts of pass/fail) and the failure annotations. In `experiment` mode, pick a first experiment from the failure patterns. In `benchmark` mode, confirm the dataset and proceed to replay the full set → step 3 (mode `benchmark`); stop (mode `add-trace`); otherwise step 2
 2. **Run only when mode is `experiment`.**
 
    **Decide once: parallel worktree subagents, or serial in this main agent.** The check is whether subagent worktree sessions would inherit bypass permissions.
@@ -559,8 +559,8 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    Hold the chosen mode in working context. Every iteration below (`make-change`, `replay-against-dataset`, `evaluate-results`) honors it.
 
-   - **(unreachable on this editor)** — **Parallel mode.** For each independent experiment, fork to a subagent using the Agent tool with `isolation: "worktree"` and `subagent_type: "general-purpose"`. The subagent edits its worktree, runs replay, returns its scored items + `testRunId` to this main agent
-   - **always** — **Serial mode.** Iterate experiments one at a time in this main agent. Subagent worktrees wouldn't inherit bypass permissions, so their Edit tool would be denied
+   - **(unreachable on this editor)** — **Parallel mode.** For each independent experiment, fork to a subagent using the Agent tool with `isolation: "worktree"` and `subagent_type: "general-purpose"`. The subagent edits its worktree, runs replay, returns its scored items + `testRunId` to this main agent → step 3
+   - **always** — **Serial mode.** Iterate experiments one at a time in this main agent. Subagent worktrees wouldn't inherit bypass permissions, so their Edit tool would be denied → step 3
 3. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Detect replay script capabilities.** Check what the replay script supports. These flags determine how experiment results are tracked and displayed. **If you already ran this step in Phase 2 earlier in this session, skip it and continue to `make-change` (or `replay-against-dataset` in benchmark mode).**
@@ -594,8 +594,8 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    > [if !supportsExperimentGroups] **Experiment groups**: no live streaming; results appear in Studio after each run
    > [if !supportsReplayTraceIds] **Replay trace IDs**: experiment results can't be persisted or compared across iterations (your SDK needs an upgrade)"
 
-   > A) **Upgrade the replay script** — regenerate the script with full support, then continue *(recommended)*
-   > B) **Continue without** — run experiments with the current script; missing features are skipped
+   > A) **Upgrade the replay script** — regenerate the script with full support, then continue *(recommended)* → step 4
+   > B) **Continue without** — run experiments with the current script; missing features are skipped → step 5
 4. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Upgrade the SDK and replay script.** The replay script references SDK APIs (`experimentGroupId`, `codeChangeDescription`, per-item `traceId`) that require a recent SDK. Upgrade the SDK first, then regenerate the script.
@@ -727,16 +727,16 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    After whichever workaround the user picks, re-run `replay-against-dataset` and re-check health. If the user can't or won't do either, stop and report — don't fabricate a workaround on your own.
 
-   - **whole replay crashed (non-zero exit, total is 0, or unparseable stdout)** — show stderr / exit code, diagnose, confirm a script fix with the user, apply, loop back to `replay-against-dataset`
-   - **every item errored (completed is 0 but total is non-zero)** — systemic infra failure (usually env mismatch). Diagnose, confirm a script fix with the user, loop back
-   - **high infra error rate (over half of items errored)** — signal is noisy. Flag the rate and ask the user whether to fix the env and retry, or proceed with the partial signal
-   - **healthy or mixed run (at least one completed item, infra errors at most half of total)** — proceed. Carry `infraErrored` forward — surface as its own bucket in the final report (the share-results step, or the benchmark scorecard's Unreplayable row in `benchmark` mode), never folded into pass/fail
+   - **whole replay crashed (non-zero exit, total is 0, or unparseable stdout)** — show stderr / exit code, diagnose, confirm a script fix with the user, apply, loop back to `replay-against-dataset` → step 7
+   - **every item errored (completed is 0 but total is non-zero)** — systemic infra failure (usually env mismatch). Diagnose, confirm a script fix with the user, loop back → step 7
+   - **high infra error rate (over half of items errored)** — signal is noisy. Flag the rate and ask the user whether to fix the env and retry, or proceed with the partial signal → step 9
+   - **healthy or mixed run (at least one completed item, infra errors at most half of total)** — proceed. Carry `infraErrored` forward — surface as its own bucket in the final report (the share-results step, or the benchmark scorecard's Unreplayable row in `benchmark` mode), never folded into pass/fail → step 9
 9. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Route on whether replay trace IDs are available.** Check the `hasTraceIds` flag from `replay-against-dataset` (this confirms the tentative `supportsReplayTraceIds` flag from `detect-replay-capabilities`). This determines whether verdicts can be persisted to the server and whether the experiments page in Studio will show meaningful results.
 
-   - **replay trace IDs are populated (`hasTraceIds` is true)** — the SDK and server support trace ID mapping. In non-benchmark modes, open the experiments page in Studio first (so the user can watch verdicts populate in real time), then evaluate and persist labels. In `benchmark` mode without the `studio` flag no Studio is open, so `open-experiments` self-skips: go straight to evaluating and persisting labels. In `benchmark` mode with the `studio` flag, `open-experiments` behaves like other modes
-   - **replay trace IDs are null (`hasTraceIds` is false)** — tell the user: "Your SDK doesn't support replay trace IDs, so experiment results can't be persisted to Studio or compared across iterations. Upgrade your SDK and run `$bitfab:setup replay` to regenerate the script. Evaluating in-agent for now." Then proceed to text-only evaluation so the user still sees comparison results in-agent, without the Studio experiments page
+   - **replay trace IDs are populated (`hasTraceIds` is true)** — the SDK and server support trace ID mapping. In non-benchmark modes, open the experiments page in Studio first (so the user can watch verdicts populate in real time), then evaluate and persist labels. In `benchmark` mode without the `studio` flag no Studio is open, so `open-experiments` self-skips: go straight to evaluating and persisting labels. In `benchmark` mode with the `studio` flag, `open-experiments` behaves like other modes → step 13
+   - **replay trace IDs are null (`hasTraceIds` is false)** — tell the user: "Your SDK doesn't support replay trace IDs, so experiment results can't be persisted to Studio or compared across iterations. Upgrade your SDK and run `$bitfab:setup replay` to regenerate the script. Evaluating in-agent for now." Then proceed to text-only evaluation so the user still sees comparison results in-agent, without the Studio experiments page → step 10
 10. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Evaluating results"`.
@@ -797,10 +797,10 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    **Verify replay labels persisted.** Route on the `status` field of the JSON the script printed in `evaluate-results`. The script is the deterministic gate — if it didn't return `ok`, the agent's verdicts are NOT yet on the replay traces and the experiment delta will be wrong on the next iteration.
 
-   - **`status: "ok"` (every replay trace has a verdict or explicit skip persisted)** — labels are persisted on the replay traces and the verdicts file is gone. In `benchmark` mode continue to the benchmark scorecard (a terminal report, no iteration); in all other modes continue to share-results (experiments page was already opened before evaluation)
-   - **`status: "missing-coverage"` (script returned a non-empty `missingTraceIds` array)** — you under-verdicted. Read the missing replay trace IDs (use `mcp__Bitfab__read_traces` with `scope: "summary"` or `"full"` if you didn't already), decide each one (PASS / FAIL with annotation, or `skip: true` if genuinely ambiguous), write a NEW verdicts file at the same path covering ALL the originally expected IDs (the script needs the full `expectedTraceIds` list each call, not just the gaps), and re-run the script. Loop back here with the new result
-   - **`status: "invalid-input"` (malformed verdicts JSON or missing fields)** — the verdicts file you wrote doesn't match the schema. Read the script's `message` field, fix the JSON (most common: missing annotation on a non-skip entry, missing traceId, expectedTraceIds empty), and re-run the script. Loop back here
-   - **`status: "mcp-error"` (MCP call to update_agent_labels failed mid-batch)** — network or auth error. The script's `partialTraceIds` lists which IDs were already persisted. Tell the user, recommend re-running the script (it's idempotent — already-persisted labels just upsert), and loop back here. If it keeps failing, stop and surface the error
+   - **`status: "ok"` (every replay trace has a verdict or explicit skip persisted)** — labels are persisted on the replay traces and the verdicts file is gone. In `benchmark` mode continue to the benchmark scorecard (a terminal report, no iteration); in all other modes continue to share-results (experiments page was already opened before evaluation) → step 1 of the Phase Benchmark: Scorecard phase (mode `benchmark`); stop (mode `add-trace`); otherwise step 14
+   - **`status: "missing-coverage"` (script returned a non-empty `missingTraceIds` array)** — you under-verdicted. Read the missing replay trace IDs (use `mcp__Bitfab__read_traces` with `scope: "summary"` or `"full"` if you didn't already), decide each one (PASS / FAIL with annotation, or `skip: true` if genuinely ambiguous), write a NEW verdicts file at the same path covering ALL the originally expected IDs (the script needs the full `expectedTraceIds` list each call, not just the gaps), and re-run the script. Loop back here with the new result → step 12
+   - **`status: "invalid-input"` (malformed verdicts JSON or missing fields)** — the verdicts file you wrote doesn't match the schema. Read the script's `message` field, fix the JSON (most common: missing annotation on a non-skip entry, missing traceId, expectedTraceIds empty), and re-run the script. Loop back here → step 12
+   - **`status: "mcp-error"` (MCP call to update_agent_labels failed mid-batch)** — network or auth error. The script's `partialTraceIds` lists which IDs were already persisted. Tell the user, recommend re-running the script (it's idempotent — already-persisted labels just upsert), and loop back here. If it keeps failing, stop and surface the error → step 12
 13. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Open experiment viewer (fallback).** This step only runs when replay trace IDs are available (routed here from `check-trace-id-support`). If no `testRunId`s were captured, skip this step and continue to evaluate.
@@ -838,8 +838,8 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    Ensure your question includes your recommended next step.
 
-   > A) **Keep iterating** — run another experiment from the plan *(recommended)*
-   > B) **Stop and wrap up** — move to the final summary
+   > A) **Keep iterating** — run another experiment from the plan *(recommended)* → step 5
+   > B) **Stop and wrap up** — move to the final summary → step 1 of the Phase 6: Validate & Wrap Up phase
 
 ## Phase 6: Validate & Wrap Up
 
