@@ -359,10 +359,25 @@ In `dataset` mode this phase is the entry point — Phase 1 (function picker) an
    - **one or more datasets already exist** — present them to the user as a numbered choice, with one option per existing dataset (name · id · current trace count) plus a "Create new" option. Recommend the most recently used dataset that has traces. If the user picks an existing dataset, hold its id and continue. If the user picks "Create new", silently call `mcp__Bitfab__create_dataset` with `name: "<key> #N"` where N is one more than the number of existing datasets (e.g. `eval-assistant #2`) — don't ask for a name. Hold the new id and continue. → step 2
 2. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Reviewing dataset"`.
 
-   Open the dataset review page for the user **immediately** after picking or creating the dataset. Use `openStudioTo.js` to route Studio to the dataset review page:
+   Open the dataset review page for the user **immediately** after picking or creating the dataset.
+
+   **First, derive the function's current input shape** so the page can flag traces that won't replay against today's code (the dataset rows and trace detail show a "Can't replay" badge when a trace's recorded inputs no longer fit the current signature). Find the function registered under `<functionKey>` in the codebase (the value passed to `getFunction(...)` / the traced function), read its parameters, and build a compact JSON shape:
+
+   ```json
+   {"fields":[{"name":"query","type":"string"},{"name":"limit","type":"number","required":false}]}
+   ```
+
+   - `name`: each top-level input field — for a single object argument, its keys; for positional params, the parameter names.
+   - `type` (optional): one of `string` / `number` / `boolean` / `object` / `array` / `null` / `unknown`. Omit if unsure.
+   - `required` (optional): defaults to true; set `false` for optional params.
+
+   This is best-effort. If you can't confidently determine the shape (no clear signature, dynamic args), **skip it** and open the bare path — the page falls back to flagging only traces that captured no inputs. Never block or ask the user about this.
+
+   Then base64-encode the shape and pass it as a `?shape=` query param (no shape -> open the bare path):
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" "/studio/trace-functions/<functionKey>/datasets/<datasetId>"
+   SHAPE=$(printf %s '{"fields":[{"name":"query","type":"string"}]}' | base64 | tr -d '\n')
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" "/studio/trace-functions/<functionKey>/datasets/<datasetId>?shape=$SHAPE"
    ```
 
    The command navigates an existing session or opens a new one automatically.
