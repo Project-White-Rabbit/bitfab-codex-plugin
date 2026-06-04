@@ -1,6 +1,6 @@
 ---
 name: assistant
-description: "Iterate on a traced function to improve pass rates using failed traces, labeling, and replay. TRIGGER when: user wants to fix failing AI outputs, improve pass rates, debug LLM behavior, iterate on prompts, label traces, run experiments, benchmark or score a dataset against the current code, run a regression test, add a trace to a dataset, or says anything like 'fix my AI', 'improve pass rate', 'why is this failing', 'iterate on traces', 'debug my agent', 'review traces', 'benchmark my dataset', 'run my dataset as a benchmark', 'how does my code score on this dataset', 'evaluate the dataset without changing anything', 'add a trace to a dataset', 'attach traces to a dataset'. SKIP when: user wants to instrument new code or set up tracing (use bitfab:setup instead)."
+description: "Iterate on a traced function to improve pass rates using failed traces, labeling, and replay; also replays a single trace to check whether a fix worked. TRIGGER when: user wants to fix failing AI outputs, improve pass rates, debug LLM behavior, iterate on prompts, label traces, run experiments, benchmark or score a dataset against the current code, run a regression test, add a trace to a dataset, OR replay/re-run one specific trace to verify a change; says anything like 'fix my AI', 'improve pass rate', 'why is this failing', 'iterate on traces', 'debug my agent', 'review traces', 'benchmark my dataset', 'run my dataset as a benchmark', 'how does my code score on this dataset', 'evaluate the dataset without changing anything', 'add a trace to a dataset', 'attach traces to a dataset', 'replay this trace', 'rerun trace <id>', 'did my fix work', 'does this trace pass now', 'check if my change fixed <id>'. SKIP when: user wants to instrument new code or set up tracing (use bitfab:setup instead)."
 ---
 
 # Bitfab Assistant
@@ -15,18 +15,19 @@ Use the local plugin MCP tools (`mcp__Bitfab__list_trace_functions`, `mcp__Bitfa
 - Present 2-5 concrete options
 - One decision per question — never batch
 
-This skill has six invocation modes, each a different entry point into the same pipeline. Four of them (`wizard`, `dataset`, `investigate`, `experiment`) converge: once they reach the shared phases (dataset → diagnose → experiments → wrap up), they follow the same path to the end. `benchmark` and `add-trace` are the exceptions — `benchmark` enters at the replay step, runs no diagnosis/experiments/wrap-up, and exits at a terminal scorecard; `add-trace` enters at its own phase, attaches the trace(s) to a dataset, and stops. The user can stop early at any decision point, but the default is to continue. Most sub-modes require the trace function key as the argument because they skip the function picker (Phase 1) and instrumentation/replay verification (Phase 2).
+This skill has seven invocation modes, each a different entry point into the same pipeline. Four of them (`wizard`, `dataset`, `investigate`, `experiment`) converge: once they reach the shared phases (dataset → diagnose → experiments → wrap up), they follow the same path to the end. `benchmark`, `add-trace`, and `replay` are the exceptions — `benchmark` enters at the replay step, runs no diagnosis/experiments/wrap-up, and exits at a terminal scorecard; `add-trace` enters at its own phase, attaches the trace(s) to a dataset, and stops; `replay` enters its own self-contained phase for lightweight single-trace replay, runs entirely in-chat, and stops. The user can stop early at any decision point, but the default is to continue. Most sub-modes require the trace function key as the argument because they skip the function picker (Phase 1) and instrumentation/replay verification (Phase 2).
 
 | Mode | Invocation | Action |
 |---|---|---|
-| `wizard` | `$bitfab:assistant`, `$bitfab:assistant wizard [<key>]`, or `$bitfab:assistant <key>` | Full flow: pick function → verify instrumentation → pick or create dataset → label → diagnose → iterate → wrap up |
+| `wizard` | `$bitfab:assistant`, `$bitfab:assistant wizard [<key>]`, or `$bitfab:assistant <key>` (`<key>` is a function key — a lone trace UUID is NOT a key and routes to `replay` instead) | Full flow: pick function → verify instrumentation → pick or create dataset → label → diagnose → iterate → wrap up |
 | `investigate` | `$bitfab:assistant investigate [<key>]` | Free-form investigation of an issue the user is describing. Read traces and code as needed to characterize the problem, then offer to stop with a summary, write a written analysis report, or roll into dataset building and continue through experiments. `<key>` is optional, the agent picks the function from what the user says when it isn't given |
 | `dataset` | `$bitfab:assistant dataset <key>` | Build or extend a labeled dataset for one function, then diagnose failures and iterate with experiments. Picks an existing dataset or creates a new one |
 | `experiment` | `$bitfab:assistant experiment <key> [<dataset-id>]` | **Edits code** to fix failing traces, replays against a labeled dataset, and iterates. Use when the user wants to *change the code and see if it improves*. If `<dataset-id>` is omitted, you'll be asked to pick one. If the function has no datasets yet, run `$bitfab:assistant dataset <key>` first |
 | `benchmark` | `$bitfab:assistant benchmark <key> [<dataset-id>] [studio]` | **No edits to the function under test.** Replay a labeled dataset against the current code as-is, evaluate each trace against its labels, and report a pass/fail scorecard, then stop. Use when the user wants to *measure the current code* (regression test, baseline, score after unrelated changes), not improve it. Infra fixes that unblock the replay (SDK / replay-script upgrade, `mockOnReplay` on a failing span) are allowed (they don't change the behavior being measured); what benchmark never does is make experiment-style edits to the traced function. If `<dataset-id>` is omitted, you'll be asked to pick one. **Terminal-only by default (no Studio).** Append the `studio` keyword to open Studio's experiments page and stream verdicts live as the replay runs |
 | `add-trace` | `$bitfab:assistant add-trace [<key>] <trace-id...> [<dataset-id>]` | Lightweight: attach one or more existing traces to a dataset (pick or create one), then stop. No labeling, diagnosis, experiments, or Studio. `<key>` is **optional** — it's inferred from the traces when omitted, so `add-trace <trace-uuid>` (trace IDs only) is valid. The request can also be phrased in natural language (e.g. "add trace abc123 to a dataset") |
+| `replay` | `$bitfab:assistant replay <key> <trace-id>` | Minimal single-trace replay, entirely in-chat: find the replay script, run it against one trace, report pass/fail in one line. No Studio/browser, no dataset, no labeling, no diagnosis, no server-side verdict persistence. For when you already made a fix and just want to know if it worked |
 
-**Argument routing.** If the argument is free-form text (not a mode name or bare function key), infer the best mode and extract the trace function key if mentioned. Confirm your pick in one line before entering the flow (e.g. "Starting investigate for `generate-email`."). If you can't pick a single mode, ask as a numbered choice. Natural-language requests to attach a specific trace to a dataset (e.g. "add this trace to a dataset", "put trace abc123 in my dataset") route to `add-trace`; extract the trace IDs and any function key or dataset ID mentioned. In `benchmark` mode, a trailing `studio` token (e.g. `benchmark generate-email studio`) or a natural-language "with studio" / "open studio" sets the **Studio opt-in** for that run: strip it from the positional args before resolving the function key and dataset ID, and hold it as a working-context flag. It applies only to `benchmark` (every other mode always opens Studio). **When the opt-in is set, treat `studioMode` as true for the rest of the run** (Studio is open), so the **Studio activity** (`node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js"`) steps fire just as in the always-Studio modes; a terminal-only benchmark leaves `studioMode` false and those steps no-op.
+**Argument routing.** If the argument is free-form text (not a mode name or bare function key), infer the best mode and extract the trace function key if mentioned. A lone UUID with no mode keyword is a **trace ID, never a function key** — route it to `replay` (single trace, verify-a-fix), not `wizard`. Confirm your pick in one line before entering the flow (e.g. "Starting investigate for `generate-email`."). If you can't pick a single mode, ask as a numbered choice. Natural-language requests to attach a specific trace to a dataset (e.g. "add this trace to a dataset", "put trace abc123 in my dataset") route to `add-trace`; extract the trace IDs and any function key or dataset ID mentioned. In `benchmark` mode, a trailing `studio` token (e.g. `benchmark generate-email studio`) or a natural-language "with studio" / "open studio" sets the **Studio opt-in** for that run: strip it from the positional args before resolving the function key and dataset ID, and hold it as a working-context flag. It applies only to `benchmark` (every other mode always opens Studio). **When the opt-in is set, treat `studioMode` as true for the rest of the run** (Studio is open), so the **Studio activity** (`node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js"`) steps fire just as in the always-Studio modes; a terminal-only benchmark leaves `studioMode` false and those steps no-op.
 
 **Disambiguating `benchmark` from `experiment`** (both replay a dataset, so free-form text is easy to misroute):
 
@@ -35,9 +36,21 @@ This skill has six invocation modes, each a different entry point into the same 
 
 When in genuine doubt between the two, default to **`benchmark`** (it's non-destructive — no edits — and the user can roll into `experiment` afterward), but say which you picked and why in one line so they can redirect.
 
-In sub-modes that take a function key, grep the codebase for `<key>` early so labeling and experiments are grounded in the actual instrumented function (the full flow does this in Phase 2; sub-modes skip Phase 2 entirely). `investigate` mode does its own function lookup and code grep in Phase Investigate. `add-trace` mode skips code grounding entirely — it never greps the codebase; it only resolves the trace's function key (via `read_traces` when not supplied) to scope the dataset.
+**Disambiguating `replay` from `experiment`** (both re-run one or more traces against the code, so free-form text is easy to misroute):
 
-**Studio** is the companion browser surface for the assistant flow. In every mode **except `benchmark` and `add-trace`** it opens automatically at the start and stays open throughout all phases, and individual phases navigate it to the relevant page (dataset review, experiment viewer, etc.). `add-trace` is terminal-only and never opens Studio. `benchmark` is terminal-only **by default** too, but opting in with the `studio` keyword opens Studio and navigates to the experiments page for this test run so verdicts stream in live as the replay runs.
+- Pick **`replay`** when the user wants to *re-run one specific trace and hear whether it's fixed/passing now*, with nothing persisted: a UUID (trace ID) appears in the message (alone or with a function key); verify-a-fix phrasing like "did my fix work", "does this trace pass now", "rerun/replay this trace", "check if my change fixed it", "is `<id>` good now"; or the message is scoped to a single trace and a change the user already made, with no mention of datasets, labeling, pass rates across many traces, or "experiments." `replay` is in-chat only and makes no edits of its own.
+- Pick **`experiment`** when the user wants to *change the code and see if it improves a whole labeled dataset*: "fix", "improve", "iterate", "try a prompt change", "make these traces pass", "improve the pass rate", "run experiments on the failures." `experiment` edits code, replays a dataset, and loops.
+
+When in genuine doubt between the two, default to **`replay`** if a single trace ID is present (it's the lighter, in-chat path and the user can roll into `experiment` afterward); otherwise default to **`experiment`**. Either way, say which you picked and why in one line so the user can redirect.
+
+For `replay`, resolve its two arguments:
+
+- **Function key:** use it if the user named it. If only a trace ID was given, you don't have to ask — Phase Replay's `setup` step reads the trace (`read_traces`), which returns the function key; derive it there.
+- **Trace ID:** the UUID from the message.
+
+In sub-modes that take a function key, grep the codebase for `<key>` early so labeling and experiments are grounded in the actual instrumented function (the full flow does this in Phase 2; sub-modes skip Phase 2 entirely). `investigate` mode does its own function lookup and code grep in Phase Investigate. `replay` mode does its own grep in Phase Replay's setup step. `add-trace` mode skips code grounding entirely — it never greps the codebase; it only resolves the trace's function key (via `read_traces` when not supplied) to scope the dataset.
+
+**Studio** is the companion browser surface for the assistant flow. In every mode **except `benchmark`, `add-trace`, and `replay`** it opens automatically at the start and stays open throughout all phases, and individual phases navigate it to the relevant page (dataset review, experiment viewer, etc.). `add-trace` and `replay` are terminal-only and never open Studio. `benchmark` is terminal-only **by default** too, but opting in with the `studio` keyword opens Studio and navigates to the experiments page for this test run so verdicts stream in live as the replay runs.
 
 **Opening a trace plan, when asked.** Opening trace plans is part of this skill, not a separate primitive — but only do it when the user asks (or the context clearly implies it, e.g. they said "show me what's captured"). Never auto-open. When triggered, run two sequential calls (step 2 needs the planId from step 1, so they can't be batched): (1) `mcp__Bitfab__get_trace_plan` with `{ traceFunctionKey: "<key>" }` returns the plan id, then (2) `openStudioTo.js "/studio/trace-plan/<planId>"` (substituting the id from step 1) routes Studio there in-place. The command finds an active session or opens a new one automatically. The Studio chrome (header, session indicator, agent activity) stays mounted around the trace plan content. No questions, no preamble, no summary up-front. If no plan exists for the key, say so in one line and offer `$bitfab:setup modify <key>` to build one.
 
@@ -63,7 +76,7 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 
 ## Phase 0: Setup
 
-**Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
+**Run only when mode is `wizard`, `dataset`, `experiment`, `investigate`, `benchmark` or `replay`.**
 
 0. First, resolve `BITFAB_PLUGIN_DIR` if it isn't already exported in this shell. Run this block verbatim — it auto-detects dev / prod / custom-`CODEX_HOME` installs:
 
@@ -126,6 +139,8 @@ The gate fires only when a recorded window went unreachable with **no close sign
    - **`experiment <key>` mode:** pass `/studio`
    - **`investigate [<key>]` mode:** pass `/studio`
    - **`benchmark <key>` mode:** only when the run opted in with the `studio` keyword (the working-context flag from argument routing): pass `/studio`. Without the flag, benchmark is terminal-only: do NOT run `openStudioTo.js` at all, skip straight to `phase-5/pick-dataset` (the step's `next` already routes there)
+
+   `replay` mode never reaches this step (it runs entirely in-chat with no Studio session) — see Phase Replay.
 
    If no active Studio session exists, the command opens a new one and enters an event loop (stays running). Run it via your runtime's "long-running exec session" mechanism. If an active session already exists, it navigates and exits immediately.
 
@@ -237,7 +252,7 @@ Check that this trace function has both instrumentation and a replay script.
    > [if !supportsInputAdapters] **Input adapters**: replay can't recover traces when the function's signature drifts after capture (fixed by upgrading the SDK)"
 
    > A) **Upgrade the replay script** — regenerate the script with full support, then continue *(recommended)* → step 4
-   > B) **Continue without** — run experiments with the current script; missing features are skipped → step 6 of the Phase 5: Iterate with Replay phase (mode `experiment`); step 7 of the Phase 5: Iterate with Replay phase (mode `benchmark`); stop (mode `add-trace`); otherwise step 1 of the Phase 3: Pick a Dataset and Label Traces phase
+   > B) **Continue without** — run experiments with the current script; missing features are skipped → step 6 of the Phase 5: Iterate with Replay phase (mode `experiment`); step 7 of the Phase 5: Iterate with Replay phase (mode `benchmark`); stop (mode `add-trace`); step 1 of the Cleanup phase (mode `replay`); otherwise step 1 of the Phase 3: Pick a Dataset and Label Traces phase
 4. **Upgrade the SDK and replay script.** The replay script references SDK APIs (`experimentGroupId`, `codeChangeDescription`, per-item `traceId`, `adaptInputs` / `adapt_inputs`) that require a recent SDK. Upgrade the SDK first, then regenerate the script.
 
    **1. Upgrade the SDK.** Read the resolved version from the lockfile (`pnpm-lock.yaml`, `poetry.lock`, `uv.lock`, `Gemfile.lock`) and compare against the latest. If outdated, run the package manager's update command:
@@ -570,7 +585,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
       - In `benchmark` mode, the dataset just needs **≥1 trace** — benchmark replays the entire dataset against the current code regardless of label mix (an all-passing dataset is a valid regression baseline).
 
    - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset fails the mode's usability gate (experiment: no validated failing labels; benchmark: no traces at all)** — tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; kill the Studio background process if one was opened (none in benchmark mode unless the `studio` flag was passed); then stop the flow → step 1 of the Cleanup phase
-   - **dataset loaded (experiment: ≥1 validated failing label; benchmark: ≥1 trace)** — summarize the dataset for the user (counts of pass/fail) and the failure annotations. In `experiment` mode, pick a first experiment from the failure patterns. In `benchmark` mode, confirm the dataset and proceed to replay the full set → step 3 (mode `benchmark`); stop (mode `add-trace`); otherwise step 2
+   - **dataset loaded (experiment: ≥1 validated failing label; benchmark: ≥1 trace)** — summarize the dataset for the user (counts of pass/fail) and the failure annotations. In `experiment` mode, pick a first experiment from the failure patterns. In `benchmark` mode, confirm the dataset and proceed to replay the full set → step 3 (mode `benchmark`); stop (mode `add-trace` or `replay`); otherwise step 2
 2. **Run only when mode is `experiment`.**
 
    **Decide once: parallel worktree subagents, or serial in this main agent.** The check is whether subagent worktree sessions would inherit bypass permissions.
@@ -849,7 +864,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    **Verify replay labels persisted.** Route on the `status` field of the JSON the script printed in `evaluate-results`. The script is the deterministic gate — if it didn't return `ok`, the agent's verdicts are NOT yet on the replay traces and the experiment delta will be wrong on the next iteration.
 
-   - **`status: "ok"` (every replay trace has a verdict or explicit skip persisted)** — labels are persisted on the replay traces and the verdicts file is gone. In `benchmark` mode continue to the benchmark scorecard (a terminal report, no iteration); in all other modes continue to share-results (experiments page was already opened before evaluation) → step 1 of the Phase Benchmark: Scorecard phase (mode `benchmark`); stop (mode `add-trace`); otherwise step 15
+   - **`status: "ok"` (every replay trace has a verdict or explicit skip persisted)** — labels are persisted on the replay traces and the verdicts file is gone. In `benchmark` mode continue to the benchmark scorecard (a terminal report, no iteration); in all other modes continue to share-results (experiments page was already opened before evaluation) → step 1 of the Phase Benchmark: Scorecard phase (mode `benchmark`); stop (mode `add-trace` or `replay`); otherwise step 15
    - **`status: "missing-coverage"` (script returned a non-empty `missingTraceIds` array)** — you under-verdicted. Read the missing replay trace IDs (use `mcp__Bitfab__read_traces` with `scope: "summary"` or `"full"` if you didn't already), decide each one (PASS / FAIL with annotation, or `skip: true` if genuinely ambiguous), write a NEW verdicts file at the same path covering ALL the originally expected IDs (the script needs the full `expectedTraceIds` list each call, not just the gaps), and re-run the script. Loop back here with the new result → step 13
    - **`status: "invalid-input"` (malformed verdicts JSON or missing fields)** — the verdicts file you wrote doesn't match the schema. Read the script's `message` field, fix the JSON (most common: missing annotation on a non-skip entry, missing traceId, expectedTraceIds empty), and re-run the script. Loop back here → step 13
    - **`status: "mcp-error"` (MCP call to update_agent_labels failed mid-batch)** — network or auth error. The script's `partialTraceIds` lists which IDs were already persisted. Tell the user, recommend re-running the script (it's idempotent — already-persisted labels just upsert), and loop back here. If it keeps failing, stop and surface the error → step 13
@@ -892,6 +907,50 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    > A) **Keep iterating** — run another experiment from the plan *(recommended)* → step 5
    > B) **Stop and wrap up** — move to the final summary → step 1 of the Phase 6: Validate & Wrap Up phase
+
+## Phase Replay: Single-Trace Quick Replay
+
+**Run only when mode is `replay`.**
+
+Reached only from `replay` mode. The user already has a trace ID and (usually) already made a fix; they just want to replay that one trace and hear whether it worked. This is the **minimal, atomic** path: no Studio/browser, no dataset, no labeling, no experiment groups, no server-side verdict persistence. Locate the replay script, read the trace, run replay against the single trace ID, compare the new output to the original, and report a one-line verdict in chat. The only server interaction is the replay itself (the SDK creates a test run intrinsically); nothing else is persisted.
+
+1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Setting up replay"`.
+
+   **Both sub-steps run without user interaction. No questions, just execute.**
+
+   **1. Read the trace (and resolve the function key).** Call `mcp__Bitfab__read_traces` with the trace ID argument and `scope: "full"`. Hold the trace's label, annotation, inputs, and output in context — these are the acceptance criteria for the verdict. **If the user gave only a trace ID and no function key** (common with free-form requests like "did my fix work on `<id>`"), take the trace function key from the trace itself — don't ask the user for it.
+
+   **2. Find the replay script.** Search for files matching `scripts/replay.*`, `scripts/*replay*`, or any file importing `bitfab.replay` / `client.replay`, and confirm it covers that trace function key. (You don't need to grep for capability flags here — this minimal path doesn't use code-change payloads, experiment groups, or verdict persistence.)
+
+   - **replay script found and trace readable** — continue to run the replay → step 2
+   - **no replay script found for this function** — tell the user: "No replay script found for `<key>`. Run `$bitfab:setup replay <key>` to create one, then re-run this command." Stop the flow → step 1 of the Cleanup phase
+   - **trace not found or unreadable** — tell the user the trace ID wasn't found or is inaccessible, stop → step 1 of the Cleanup phase
+2. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Running replay"`.
+
+   **Run the replay against the one trace ID. No user interaction, no extra flags.**
+
+   ```bash
+   cd <project-dir> && npx tsx <replay-script> <function-key> --trace-ids <trace-id>
+   ```
+
+   Do **not** pass `--code-change` or `--experiment-group-id` — this minimal path skips code-change payloads and experiment groups. Capture the JSON output and exit code.
+
+   **Quick health check.** If the replay crashed (non-zero exit, no items) or the single item has `item.error` set, hold the error for the verdict step. Otherwise hold the completed item's new output alongside the original output you read in `setup`.
+3. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Evaluating result"`.
+
+   **Compare the single replay result to the original and report in one line.** Nothing is persisted; this is an in-chat verdict.
+
+   **If the replay errored** (crashed or `item.error` set): report the error clearly. This is an infra issue (missing DB row, env mismatch, etc.), not a code failure. Offer to retry after fixing the env, or to stop.
+
+   **If the replay completed**, compare the new output against the original trace's label and annotation, then report one line:
+
+   - Original was **fail** with an annotation: does the new output address it? → "**Pass**: the fix addresses the original failure ('<annotation summary>')." vs "**Still failing**: <what's still wrong>."
+   - Original was **pass**: preserved → "**Pass**: output unchanged in quality." regressed → "**Regressed**: was passing, now <what broke>."
+   - No label on the original: show a short before/after diff and summarize whether it looks better.
+
+   > A) **Iterate** — make another change and re-replay the same trace → step 4
+   > B) **Done** *(recommended)* → step 1 of the Cleanup phase
+4. **Make another change before re-replaying.** Ask what to change, or let the user describe the fix. Edit the code, then loop back to run the replay again. If the user says they'll make the change themselves, wait for their message, then proceed.
 
 ## Phase 6: Validate & Wrap Up
 
@@ -962,7 +1021,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
 ## Cleanup
 
-**Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
+**Run only when mode is `wizard`, `dataset`, `experiment`, `investigate`, `benchmark` or `replay`.**
 
 1. If a Studio session was opened at any point during this flow (any command that emitted a `{"event":"session-ready","sessionId":"<uuid>"}` JSONL line), close it now:
 
