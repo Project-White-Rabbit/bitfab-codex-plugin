@@ -71,7 +71,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 | `openTracePlan.js <planId>` | Open the trace plan confirmation UI in Studio (blocks until user confirms or cancels) |
 | `waitForTrace.js <trace-function-key>` | Poll for the first trace to arrive (blocks up to ~10 min) |
 | `startTemplatePreview.js <functionKey>` | Open the template editor preview in Studio (blocks until user clicks Done) |
-| `closeStudio.js <sessionId>` | Close the Studio browser tab for an agent session |
+| `closeStudio.js [message]` | Close the active Studio session (tab + background event process); no-op when nothing is open |
 | `clearStudioSession.js` | Clear the stale active-Studio pointer so the next open starts fresh |
 | `update.js <mode>` | Check plugin + SDK versions and install the latest (used by inspect to detect and fix staleness) |
 
@@ -620,13 +620,13 @@ Templates control how a span's input / output renders in the Bitfab UI. They are
 
 ## Cleanup
 
-1. If a Studio session was opened at any point during this flow (any command that emitted a `{"event":"session-ready","sessionId":"<uuid>"}` JSONL line), close it now:
+1. Close Studio. Run this unconditionally: it resolves the active session from disk, closes the Studio tab, stops the background `openStudioTo.js` event process, and exits quietly (`{"event":"no-active-studio"}`) when nothing was opened:
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/closeStudio.js" <sessionId>
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/closeStudio.js"
    ```
 
-   If no Studio session was opened during this flow, skip this step.
+   No sessionId argument is needed; do not track or look up one. This is silent housekeeping: never narrate it, reason about whether a session was opened, or report the outcome to the user (no "closing Studio", no "nothing to close").
 
 ## Refactor confirmation (applies to Instrument step 8 and Replay step 5)
 

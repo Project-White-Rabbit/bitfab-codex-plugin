@@ -71,7 +71,7 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 | `openStudioTo.js <path>` | Navigate an existing Studio session or open a new one at the given path |
 | `pushActivity.js {action} "{displayName}"` | Emit activity events to the Studio sidebar |
 | `persistReplayLabels.js <verdicts-file>` | Persist replay verdicts from a JSON file to Bitfab via MCP |
-| `closeStudio.js <sessionId>` | Close the Studio browser tab for an agent session |
+| `closeStudio.js [message]` | Close the active Studio session (tab + background event process); no-op when nothing is open |
 | `clearStudioSession.js` | Clear the stale active-Studio pointer so the next open starts fresh |
 
 ## Phase 0: Setup
@@ -308,7 +308,7 @@ Reached only from `investigate` mode. The user is describing an issue they want 
    > B) **Write an analysis report** — save the findings to a markdown file I can share or revisit later → step 4
    > C) **Build a labeled dataset** — use these traces as seed candidates and label them so we can iterate against them later *(recommended)* → step 1 of the Phase 3: Pick a Dataset and Label Traces phase
 
-   If the user picks option A, kill the Studio background process (send SIGINT or abort the background task) before stopping, so it doesn't linger as an orphan. Option B kills Studio on exit (the report step). Option C continues through dataset building, diagnosis, and experiments, with Studio staying open throughout; Phase 6 kills it at wrap-up.
+   Options A and B end at the cleanup step, which closes Studio and stops its background process. Option C continues through dataset building, diagnosis, and experiments, with Studio staying open throughout until cleanup at wrap-up.
 4. Write a markdown report capturing the investigation. Path: `.bitfab/analysis/<traceFunctionKey>-<YYYY-MM-DD-HHmm>.md` (create the `.bitfab/analysis/` directory if missing; fall back to a path under the repo root or `os.tmpdir()` if the project root isn't writable). Use the `Write` tool with this structure:
 
    ```markdown
@@ -334,7 +334,7 @@ Reached only from `investigate` mode. The user is describing an issue they want 
    <concrete actions: build a dataset around hypothesis X, instrument span Y, ship a code fix for Z, etc.>
    ```
 
-   After writing, tell the user the file path so they can open or share it. Then stop, kill the Studio background process (send SIGINT or abort the background task), and exit. Do NOT roll into dataset building automatically; that is option C, not option B.
+   After writing, tell the user the file path so they can open or share it, then stop (the cleanup step closes Studio). Do NOT roll into dataset building automatically; that is option C, not option B.
 
 ## Phase Add: Attach a Trace to a Dataset
 
@@ -584,7 +584,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
       - In `experiment` mode, the dataset must have **≥1 validated failing label** (there has to be something to fix).
       - In `benchmark` mode, the dataset just needs **≥1 trace** — benchmark replays the entire dataset against the current code regardless of label mix (an all-passing dataset is a valid regression baseline).
 
-   - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset fails the mode's usability gate (experiment: no validated failing labels; benchmark: no traces at all)** — tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; kill the Studio background process if one was opened (none in benchmark mode unless the `studio` flag was passed); then stop the flow → step 1 of the Cleanup phase
+   - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset fails the mode's usability gate (experiment: no validated failing labels; benchmark: no traces at all)** — tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; then stop the flow (the cleanup step closes Studio if one was opened) → step 1 of the Cleanup phase
    - **dataset loaded (experiment: ≥1 validated failing label; benchmark: ≥1 trace)** — summarize the dataset for the user (counts of pass/fail) and the failure annotations. In `experiment` mode, pick a first experiment from the failure patterns. In `benchmark` mode, confirm the dataset and proceed to replay the full set → step 3 (mode `benchmark`); stop (mode `add-trace` or `replay`); otherwise step 2
 2. **Run only when mode is `experiment`.**
 
@@ -970,8 +970,6 @@ Reached only from `replay` mode. The user already has a trace ID and (usually) a
    >
    > The changes are in your working tree (not committed). Review the diffs and commit when ready."
 
-   Kill the Studio background process (send SIGINT or abort the background task).
-
    If `Z > 0`, add one line naming the infra cause (e.g. "Z traces unreplayable — missing DB rows; refresh the dataset or scope to a snapshot next pass") so the user has a next step beyond the code.
 
 ## Phase Benchmark: Scorecard
@@ -1015,18 +1013,16 @@ Reached only from `replay` mode. The user already has a trace ID and (usually) a
 
    **If running in text-only mode** (trace IDs were unavailable): append a one-line note under the tables that persistent results require upgrading to `@bitfab/sdk` 0.13.6+.
 
-   **If this run opened Studio** (the `studio` opt-in was passed), kill the Studio background process now (send SIGINT or abort the background task) before continuing to cleanup, so the long-running `openStudioTo.js` poller doesn't outlive the run. `closeStudio.js` in the cleanup step closes the Studio tab but does not stop that background process. If no Studio was opened (terminal-only benchmark), skip this.
-
    This is a terminal step. Report the scorecard and stop. Do not offer to iterate or make changes (the user can run `$bitfab:assistant experiment <key>` separately if they want to fix failures).
 
 ## Cleanup
 
 **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate`, `benchmark` or `replay`.**
 
-1. If a Studio session was opened at any point during this flow (any command that emitted a `{"event":"session-ready","sessionId":"<uuid>"}` JSONL line), close it now:
+1. Close Studio. Run this unconditionally: it resolves the active session from disk, closes the Studio tab, stops the background `openStudioTo.js` event process, and exits quietly (`{"event":"no-active-studio"}`) when nothing was opened:
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/closeStudio.js" <sessionId>
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/closeStudio.js"
    ```
 
-   If no Studio session was opened during this flow, skip this step.
+   No sessionId argument is needed; do not track or look up one. This is silent housekeeping: never narrate it, reason about whether a session was opened, or report the outcome to the user (no "closing Studio", no "nothing to close").
