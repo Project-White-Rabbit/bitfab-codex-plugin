@@ -20,9 +20,9 @@ description: "Set up and maintain Bitfab tracing for AI features. TRIGGER when: 
 - Stop polling only when: (a) the process exits 0 with its completion summary, (b) the process exits non-zero, or (c) the user explicitly cancels.
 - When the process exits, immediately continue with the next step, do not wait for another user message.
 
-This skill has nine phases: **explain**, **login**, **session-logs**, **instrument**, **modify**, **inspect**, **view**, **replay**, and **templates**. Run individually or all at once (`wizard` runs login → instrument → replay; `explain` is a standalone read-only overview that requires no login; `session-logs` is standalone and does not require login; `modify` is only invoked explicitly or as a branch from the Instrument step 2 menu; `inspect` is a standalone diagnostic (with optional one-shot fixes) invoked explicitly; `view` is only invoked explicitly; `templates` is only invoked explicitly).
+This skill has ten phases: **explain**, **login**, **session-logs**, **instrument**, **modify**, **inspect**, **switch-org**, **view**, **replay**, and **templates**. Run individually or all at once (`wizard` runs login → instrument → replay; `explain` is a standalone read-only overview that requires no login; `session-logs` is standalone and does not require login; `modify` is only invoked explicitly or as a branch from the Instrument step 2 menu; `inspect` is a standalone diagnostic (with optional one-shot fixes) invoked explicitly; `switch-org` is a standalone account action (requires auth) invoked explicitly; `view` is only invoked explicitly; `templates` is only invoked explicitly).
 
-**Natural-language aliases (these reuse an existing mode, not a separate one):** "explain Bitfab" / "what is Bitfab" → `explain`; "trace a new workflow" / "instrument a new flow" → `instrument`; "update-setup" / "update my tracing setup" / "adjust what's captured" → `modify` (NOT a plugin/SDK *version* bump — that's `$bitfab:update`); "debug-setup" / "debug my tracing setup" / "inspect my tracing" / "why aren't my traces showing up" / "what's instrumented" → `inspect` (for output-*quality* debugging use `$bitfab:assistant` instead).
+**Natural-language aliases (these reuse an existing mode, not a separate one):** "explain Bitfab" / "what is Bitfab" → `explain`; "trace a new workflow" / "instrument a new flow" → `instrument`; "update-setup" / "update my tracing setup" / "adjust what's captured" → `modify` (NOT a plugin/SDK *version* bump — that's `$bitfab:update`); "debug-setup" / "debug my tracing setup" / "inspect my tracing" / "why aren't my traces showing up" / "what's instrumented" → `inspect` (for output-*quality* debugging use `$bitfab:assistant` instead); "switch org" / "change org" / "switch to the <name> org" / "I'm in the wrong org" → `switch-org`.
 
 Within an Instrument cycle, **instrumentation and the replay pipeline for the cycle's trace function are written in the same batch of tool calls** once the trace plan is confirmed (see step 11). The Replay phase in `wizard` mode is therefore a coverage-verification/backfill sweep — it typically finds every key already wired up.
 
@@ -47,7 +47,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 - **Framework integrations (fetch when a framework is detected in step 1 of Instrument):** `/frameworks/langgraph`, `/frameworks/openai-agents`, `/frameworks/claude-agent-sdk`, `/frameworks/baml`. Each page documents the SDK's native handler/processor/wrapper for that framework, which is usually preferable to hand-wrapping every node/agent call with `withSpan`/`@span`.
 - **Tutorials / walkthroughs / replay script template:** the language-specific guide pages (`/typescript-sdk`, `/python-sdk`, `/ruby-sdk`, `/go-sdk`). Use these for the copy-pasteable replay script and the replay output contract. During Instrument, fetch the `#replay` section before step 11 so the replay script can be written in the same cycle as instrumentation.
 
-**MCP tools:** This skill uses `get_bitfab_api_key`, `create_trace_plan`, and `get_trace_plan` (login / instrument / modify / view), `list_trace_functions` and `search_traces` (`inspect` and `templates`), and — for the `templates` mode only — `get_template_reference`, `get_template`, and `update_template`. All come from the **local plugin MCP server** (bundled with this plugin), exposed under the `mcp__Bitfab__*` prefix.
+**MCP tools:** This skill uses `get_bitfab_api_key`, `create_trace_plan`, and `get_trace_plan` (login / instrument / modify / view), `list_trace_functions` and `search_traces` (`inspect` and `templates`), `list_organizations` (`switch-org`), and — for the `templates` mode only — `get_template_reference`, `get_template`, and `update_template`. All come from the **local plugin MCP server** (bundled with this plugin), exposed under the `mcp__Bitfab__*` prefix.
 
 | Invocation | Action |
 |---|---|
@@ -57,6 +57,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 | `$bitfab:setup instrument` | Instrument AI workflows with Bitfab tracing |
 | `$bitfab:setup modify` | Modify an existing trace setup (add context, change depth, or move the root) |
 | `$bitfab:setup inspect` | Diagnose (and offer to fix) your tracing setup: auth, what's instrumented, plugin/SDK freshness, replay coverage, trace arrival |
+| `$bitfab:setup switch-org` | Switch which Bitfab org the plugin reads and writes (replaces the local API key) |
 | `$bitfab:setup view` | Open the trace planner UI for an existing trace function (read-only) |
 | `$bitfab:setup replay` | Create or update replay scripts for instrumented workflows |
 | `$bitfab:setup session-logs` | Opt in or out of session log collection (no login required) |
@@ -68,6 +69,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 |---------|-------------|
 | `status.js` | Check plugin authentication and connection status |
 | `login.js` | Authenticate for setup/instrumentation; standalone browser OAuth (blocks). Studio, dataset, and experiment flows log in inline and need no pre-login. |
+| `switchOrg.js [<clerkOrganizationId>]` | List the user's Bitfab orgs (no args), or switch the plugin's active org and replace the local API key (with a <clerkOrganizationId> arg) |
 | `openTracePlan.js <planId>` | Open the trace plan confirmation UI in Studio (blocks until user confirms or cancels) |
 | `waitForTrace.js <trace-function-key>` | Poll for the first trace to arrive (blocks up to ~10 min) |
 | `startTemplatePreview.js <functionKey>` | Open the template editor preview in Studio (blocks until user clicks Done) |
@@ -139,6 +141,7 @@ Explain what Bitfab is and how this skill is organized. Read-only — no authent
      $bitfab:setup instrument Wrap a new AI workflow with tracing
      $bitfab:setup modify     Adjust what an existing trace captures
      $bitfab:setup inspect    Diagnose + fix setup: auth, what's instrumented, SDK/plugin current, replay coverage, traces arriving
+     $bitfab:setup switch-org Switch which org the plugin reads and writes
      $bitfab:setup view       Open one trace function's plan in the browser (read-only)
      $bitfab:setup replay     Create or update replay scripts
      $bitfab:setup templates  Change how a trace function's spans render
@@ -476,6 +479,42 @@ This is about trace *delivery and setup health* (is the SDK wired up and current
    - **Replay missing or incomplete** — ask the user to refresh; if yes, run `$bitfab:setup replay` to create or extend the scripts so every trace function key is covered (it is non-interactive).
 
    For unusual monorepos or private registries, defer to `$bitfab:update`. Report what was applied and what the user declined. Do not open Studio.
+
+## Switch Org
+
+**Run only when mode is `switch-org`.**
+
+Switch which Bitfab organization the plugin reads and writes. Triggered explicitly by `$bitfab:setup switch-org` (or natural-language asks like "switch org" / "change org" / "switch to the <name> org" / "I'm in the wrong org"). The plugin's org is set by the API key in `~/.config/bitfab/credentials.json`; this lists the user's orgs, switches to the chosen one, and replaces that local key. Requires authentication. Does **not** open Studio.
+
+**The live browser does not follow on its own.** Switching persists the new active org server-side (so future sign-ins default to it) and replaces the plugin's key, but a browser tab that's already signed in keeps showing the old org until its session is re-minted. The org actually flips in the browser on the **next** Studio open (a fresh session whose org gate runs Clerk's client-side `setActive`) or when the user picks the org from the in-app org switcher.
+
+1. Switching orgs requires an authenticated plugin. Run the status check:
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/status.js"
+   ```
+
+   If **already authenticated**, continue to step 2. If **not authenticated**, tell the user to sign in first with `$bitfab:setup login`, then stop; do NOT run the login flow as part of switching.
+2. Call `mcp__Bitfab__list_organizations` to list the organizations the signed-in user belongs to. Each entry has a name, the user's role, an `id:` (the `clerkOrganizationId`), and the org the plugin uses now is marked `[current]`.
+
+   Choose the target org:
+   - **If the user already named an org** (in their request), match it case-insensitively by name against the list and use that org's `id`. If the name matches none, or matches more than one, fall through to asking.
+   - **If the only org is the current one**, there's nothing to switch to, so tell the user and stop (route to cleanup).
+   - **Otherwise** ask the user which org to switch to. List each org by name and role, and mark the current one. Use the chosen org's `id`.
+
+   Only ever use an `id` value returned by `mcp__Bitfab__list_organizations`; never invent one. Carry the chosen id into the next step.
+3. Switch to the chosen org by passing its `clerkOrganizationId`:
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/switchOrg.js" <clerkOrganizationId>
+   ```
+
+   The command prints one JSON line; act on it:
+   - `{"event":"switched","status":"switched"|"already-aligned","clerkOrganizationId":"...","organizationName":"..."}`: success. The plugin now reads and writes that org and its API key has been replaced locally. Tell the user in one line: the plugin is now connected to **<organizationName>**. Then add that their **already-open browser tabs won't switch on their own**; to see the new org in Studio they re-open it from a plugin action (an experiments or dataset flow) or use the in-app org switcher.
+   - `{"event":"not-member","clerkOrganizationId":"..."}`: the user isn't a member of that org. Report it and stop; do not retry.
+   - `{"event":"error","reason":"..."}`: report the reason and stop.
+
+   Never print, log, or ask for the API key; the command replaces it for you.
 
 ## View
 

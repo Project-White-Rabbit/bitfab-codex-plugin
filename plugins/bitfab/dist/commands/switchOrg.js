@@ -1,0 +1,6 @@
+import { runSwitchOrg } from "bitfab-plugin-lib";
+import { platform } from "../platform.js";
+runSwitchOrg(platform).catch((err) => {
+    console.error("Org switch failed:", err.message);
+    process.exit(1);
+});
