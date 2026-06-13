@@ -514,11 +514,14 @@ Switch which Bitfab organization the plugin reads and writes. Triggered explicit
 
    The command prints one JSON line; act on it:
    - `{"event":"switched","status":"switched"|"already-aligned","clerkOrganizationId":"...","organizationName":"...","apiKey":"..."}`: success. The plugin now reads and writes that org and its API key has been replaced locally. Tell the user in one line: the plugin is now connected to **<organizationName>**. Then add that their **already-open browser tabs won't switch on their own**; to see the new org in Studio they re-open it from a plugin action (an experiments or dataset flow) or use the in-app org switcher. Hold on to the `apiKey` value from this JSON; the next step uses it to sync the app's local key, and you must never echo that value to the user.
-   - `{"event":"not-member","clerkOrganizationId":"..."}`: the user isn't a member of that org. Report it and stop; do not retry.
-   - `{"event":"error","reason":"..."}`: report the reason and stop.
+   - `{"event":"not-member","clerkOrganizationId":"..."}`: the user isn't a member of that org. Report it; do not retry.
+   - `{"event":"error","reason":"..."}`: report the reason.
 
    Do not print or ask for the API key, and do not surface the `apiKey` value to the user; the command replaces the plugin's copy for you and hands you that value solely for the next step.
-4. **Only run this step if the previous step reported `{"event":"switched"}`.** If the switch returned `not-member` or `error` you already stopped, the plugin key was not replaced, and there is nothing to sync, so skip this step entirely.
+
+   - **the command printed `{"event":"switched"}` (or `"already-aligned"`)**: sync the app's local API key next → step 4
+   - **the command printed `{"event":"not-member"}` or `{"event":"error"}`**: the plugin key was not replaced, so there is nothing local to sync → step 1 of the Cleanup phase
+4. This step is reached only when the switch reported `{"event":"switched"}` (or `"already-aligned"`); a `not-member` or `error` result already routed to cleanup with nothing to sync.
 
    The switch replaced the **plugin's** key (in `~/.config/bitfab/credentials.json`). It did **not** touch the `BITFAB_API_KEY` your own application reads at runtime, so traces your code sends still land in the **old** org until that key is updated too.
 
@@ -590,15 +593,19 @@ Replay scripts let the team regression-test any trace function against productio
    - **Follow the docs' Replay Output Contract**: capture the full `ReplayResult` (items + `testRunId` + `testRunUrl`, including `durationMs`/`duration_ms`, `tokens`, and `model` per item) into one variable and emit it as a single JSON object to stdout via `JSON.stringify(result, null, 2)` (TS), `json.dumps(result, indent=2, default=str)` (Python), or `JSON.pretty_generate(result)` (Ruby). A subagent reading the output must be able to `JSON.parse` / `json.loads` one contiguous block, do not replace the JSON dump with per-field log lines, counts, lengths, hashes, or previews. Writing the same JSON to `scripts/replay-result.json` in parallel is optional but encouraged.
    - Print a short human-readable summary (total replayed, same, changed, errors) and the test run URL ahead of the JSON dump
    - Live in a `scripts/` directory (or the project's existing scripts location)
-5. **Safety net for legacy instrumentation.** If an already-instrumented function (introduced before Instrument's trace-boundary serializability gate, or via another path) can't be invoked from the replay script, most commonly because it isn't exported, is defined inline in a route handler, or takes unserializable inputs, ask the user offering Instrument's trace-boundary resolutions:
+5. **Safety net for legacy instrumentation.** First decide whether any instrumented trace function can't be invoked from the replay script, most commonly because it isn't exported, is defined inline in a route handler, or takes unserializable inputs (such a function was introduced before Instrument's trace-boundary serializability gate, or via another path). Reason from each function's signature and visibility; do not execute the script to detect this.
 
    **Handler-instrumented keys are not a safety-net case.** A key registered only via a framework handler has no decorated function by design; create its pipeline with the key-based replay pattern from step 4 instead of offering these resolutions.
+
+   - **every instrumented function is invocable from the replay script (no safety-net case applies)**: nothing to resolve → step 1 of the Cleanup phase
+
+   If one or more functions can't be invoked, ask the user offering Instrument's trace-boundary resolutions:
 
    > A) **Move trace boundary inward** → step 1 of the Cleanup phase
    > B) **Refactor** *(recommended)* → step 1 of the Cleanup phase
    > C) **Leave as-is**: add a header comment noting why the function isn't callable and flag that the script will rot → step 1 of the Cleanup phase
 
-   Reason from the function's signature and visibility; do not execute the script to detect this. **If the user picks "Refactor" (or a boundary move that requires rewriting callers), apply the "Refactor confirmation" rule below, present a refactor plan labeled as *visibility* or *structural* and get a second confirmation before modifying code.**
+   **If the user picks "Refactor" (or a boundary move that requires rewriting callers), apply the "Refactor confirmation" rule below, present a refactor plan labeled as *visibility* or *structural* and get a second confirmation before modifying code.**
 
 ## DB Branching
 
