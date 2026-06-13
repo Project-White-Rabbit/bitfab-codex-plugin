@@ -10,8 +10,8 @@ Update the Bitfab Codex plugin and/or every workspace's SDK in the current proje
 | Invocation | What runs |
 |---|---|
 | `$bitfab:update` or `$bitfab:update all` | Plugin update **and** SDK update per workspace |
-| `$bitfab:update plugin` | Plugin update only — skips all SDK steps |
-| `$bitfab:update sdk` | SDK update only — skips the plugin check |
+| `$bitfab:update plugin` | Plugin update only, skips all SDK steps |
+| `$bitfab:update sdk` | SDK update only, skips the plugin check |
 
 **CLI commands** available via Bash (all paths relative to `${BITFAB_PLUGIN_DIR}/dist/commands/`):
 
@@ -46,8 +46,8 @@ Update the Bitfab Codex plugin and/or every workspace's SDK in the current proje
    - For `$bitfab:update` or `$bitfab:update all`, run with no argument (or `all`).
 
    The script does up to two things depending on mode:
-   - **Plugin phase** (`all` or `plugin`) — updates the plugin if a newer version is available.
-   - **SDK phase** (`all` or `sdk`) — queries the registry for the latest SDK version and prints a `<bitfab-sdk-status>` block with one JSON entry per `(workspace, language)` pair. Falls back to the baked snapshot (sets `remoteCheckFailed: true`) if the registry lookup fails.
+   - **Plugin phase** (`all` or `plugin`), updates the plugin if a newer version is available.
+   - **SDK phase** (`all` or `sdk`), queries the registry for the latest SDK version and prints a `<bitfab-sdk-status>` block with one JSON entry per `(workspace, language)` pair. Falls back to the baked snapshot (sets `remoteCheckFailed: true`) if the registry lookup fails.
 
 ## Update plugin
 
@@ -61,21 +61,21 @@ Update the Bitfab Codex plugin and/or every workspace's SDK in the current proje
 
 1. Each line inside `<bitfab-sdk-status>` is a JSON object with fields:
 
-   - `workspacePath` — relative path of the workspace from the repo root (`"."` for non-monorepos or the root package itself)
-   - `language` — `"typescript" | "python" | "ruby" | "go"`
-   - `packageName` — the canonical SDK package name (`@bitfab/sdk`, `bitfab-py`, `bitfab`, `github.com/Project-White-Rabbit/bitfab-go`)
-   - `declaredVersion` — the range from the workspace's manifest. May be `null` or a loose range.
-   - `resolvedVersion` — the exact version from the lockfile (workspace's own lockfile, or the monorepo root lockfile used as fallback). This is the truth — what the user is actually running.
-   - `current` — `resolvedVersion ?? declaredVersion`. Use this for user-facing messages.
-   - `latest` — the latest published version (from the source indicated by `latestSource`)
-   - `latestSource` — `"remote"` (fetched live from the registry) or `"baked"` (snapshot from the plugin build)
-   - `remoteCheckFailed` — `true` when the live registry lookup failed; trigger the agent fallback (step 3)
-   - `updateAvailable` — `true` when `latest > current` OR when `renameFrom` is set (package rename needed)
-   - `renameFrom` — when non-null (e.g. `"bitfab"`), the workspace uses the legacy package name and must be switched to `packageName` (`@bitfab/sdk`). The update step should remove the old package and install the new one, then update imports in source files.
-   - `deprecated` — `true` when the workspace uses the legacy `bitfab` package name instead of `@bitfab/sdk`. Equivalent to `renameFrom !== null`; kept for backward compatibility.
-   - `manifestPath` / `lockfilePath` — absolute paths of the files the info came from
+   - `workspacePath`, relative path of the workspace from the repo root (`"."` for non-monorepos or the root package itself)
+   - `language`, `"typescript" | "python" | "ruby" | "go"`
+   - `packageName`, the canonical SDK package name (`@bitfab/sdk`, `bitfab-py`, `bitfab`, `github.com/Project-White-Rabbit/bitfab-go`)
+   - `declaredVersion`, the range from the workspace's manifest. May be `null` or a loose range.
+   - `resolvedVersion`, the exact version from the lockfile (workspace's own lockfile, or the monorepo root lockfile used as fallback). This is the truth, what the user is actually running.
+   - `current`, `resolvedVersion ?? declaredVersion`. Use this for user-facing messages.
+   - `latest`, the latest published version (from the source indicated by `latestSource`)
+   - `latestSource`, `"remote"` (fetched live from the registry) or `"baked"` (snapshot from the plugin build)
+   - `remoteCheckFailed`, `true` when the live registry lookup failed; trigger the agent fallback (step 3)
+   - `updateAvailable`, `true` when `latest > current` OR when `renameFrom` is set (package rename needed)
+   - `renameFrom`, when non-null (e.g. `"bitfab"`), the workspace uses the legacy package name and must be switched to `packageName` (`@bitfab/sdk`). The update step should remove the old package and install the new one, then update imports in source files.
+   - `deprecated`, `true` when the workspace uses the legacy `bitfab` package name instead of `@bitfab/sdk`. Equivalent to `renameFrom !== null`; kept for backward compatibility.
+   - `manifestPath` / `lockfilePath`, absolute paths of the files the info came from
 
-   If there are **no lines** inside `<bitfab-sdk-status>`, the programmatic check found no SDK — but don't stop yet, run step 2 first. After that step, distinguish two cases:
+   If there are **no lines** inside `<bitfab-sdk-status>`, the programmatic check found no SDK, but don't stop yet, run step 2 first. After that step, distinguish two cases:
 
    - **No SDK anywhere** (no lines AND step 2 found no imports): the project isn't instrumented yet. Tell the user the Bitfab SDK isn't installed and suggest running `$bitfab:setup` to instrument the project. Stop.
    - **SDKs present and current** (every entry has `updateAvailable: false` AND step 2 finds no extras): tell the user their SDKs are up to date and stop.
@@ -92,7 +92,7 @@ Update the Bitfab Codex plugin and/or every workspace's SDK in the current proje
    - Compare that set against the `workspacePath` values in `<bitfab-sdk-status>`.
    - For each workspace that has imports but **no** corresponding status entry, treat it as a missed detection: ask the user which package manager that workspace uses, then go to step 3 for it (same flow as `remoteCheckFailed: true`).
    - If the sets match, proceed.
-3. For each entry where `remoteCheckFailed: true`, or any workspace discovered only in step 2, run the package manager's native outdated command from the workspace directory. The command is authoritative — it respects private registries, mirrors, and offline caches.
+3. For each entry where `remoteCheckFailed: true`, or any workspace discovered only in step 2, run the package manager's native outdated command from the workspace directory. The command is authoritative, it respects private registries, mirrors, and offline caches.
 
    | Language | Detection (from workspace/repo) | Command (run from workspace dir) |
    |---|---|---|
@@ -102,25 +102,25 @@ Update the Bitfab Codex plugin and/or every workspace's SDK in the current proje
    | go | `go.mod` | `go list -m -u -json github.com/Project-White-Rabbit/bitfab-go` |
 
    Use the real latest from the command's output in place of `latest` when deciding whether to offer an upgrade.
-4. If there are **3 or more** workspaces with `updateAvailable: true`, ask — **one decision per question**:
+4. If there are **3 or more** workspaces with `updateAvailable: true`, ask : **one decision per question**:
 
    > A) **Update all N outdated workspaces** *(recommended)* → step 7
    > B) **Ask me per workspace** → step 5
    > C) **Skip everything** → stop
 
-   **Always recommend "Update all" (option A).** Do not downgrade the recommendation based on the range specifier or lockfile shape — not for `workspace:*` / `workspace:^`, not for git refs, not for pinned `"=X.Y.Z"`, not for path deps. An outdated SDK is an outdated SDK. If the user is working inside a monorepo where the dep is workspace-linked to a sibling SDK package, they are free to pick **Skip** themselves, but the recommended action is still **Update**.
+   **Always recommend "Update all" (option A).** Do not downgrade the recommendation based on the range specifier or lockfile shape, not for `workspace:*` / `workspace:^`, not for git refs, not for pinned `"=X.Y.Z"`, not for path deps. An outdated SDK is an outdated SDK. If the user is working inside a monorepo where the dep is workspace-linked to a sibling SDK package, they are free to pick **Skip** themselves, but the recommended action is still **Update**.
 
    If there are **fewer than 3** outdated workspaces, skip this prompt and go straight to per-workspace.
-5. For the next workspace with `updateAvailable: true`, ask — **one decision per question**:
+5. For the next workspace with `updateAvailable: true`, ask : **one decision per question**:
 
-   > We recommend **Update**: `<workspacePath>` — `<language>` SDK `<current>` → `<latest>`.
+   > We recommend **Update**: `<workspacePath>`, `<language>` SDK `<current>` → `<latest>`.
    > If `renameFrom` is set, append: (also renames `<renameFrom>` → `<packageName>`)
    >
-   > A) **Update** — run the package manager update command now *(recommended)* → step 6
-   > B) **Skip** — leave this workspace on `<current>` → step 5
+   > A) **Update**: run the package manager update command now *(recommended)* → step 6
+   > B) **Skip**: leave this workspace on `<current>` → step 5
 
    When no outdated workspaces remain, exit and acknowledge.
-6. Detect the package manager from the lockfiles and run the update **from the workspace directory** (not repo root — matters in monorepos):
+6. Detect the package manager from the lockfiles and run the update **from the workspace directory** (not repo root, matters in monorepos):
 
    | Language | Command |
    |---|---|
