@@ -1,6 +1,6 @@
 {
   "name": "bitfab",
-  "version": "0.8.11",
+  "version": "0.8.13",
   "description": "Automated regression testing and improvements for your prompts, context, and tool calls.",
   "skills": "./skills",
   "hooks": "./hooks/hooks.json",

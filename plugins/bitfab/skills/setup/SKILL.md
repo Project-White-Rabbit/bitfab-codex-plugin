@@ -20,11 +20,11 @@ description: "Set up and maintain Bitfab tracing for AI features. TRIGGER when: 
 - Stop polling only when: (a) the process exits 0 with its completion summary, (b) the process exits non-zero, or (c) the user explicitly cancels.
 - When the process exits, immediately continue with the next step, do not wait for another user message.
 
-This skill has eleven phases: **explain**, **login**, **session-logs**, **instrument**, **modify**, **inspect**, **switch-org**, **view**, **replay**, **db-branching**, and **templates**. Run individually or all at once (`wizard` runs login → instrument → replay; `explain` is a standalone read-only overview that requires no login; `session-logs` is standalone and does not require login; `modify` is only invoked explicitly or as a branch from the Instrument step 2 menu; `inspect` is a standalone diagnostic (with optional one-shot fixes) invoked explicitly; `switch-org` is a standalone account action (requires auth) invoked explicitly; `view` is only invoked explicitly; `db-branching` is only invoked explicitly; `templates` is only invoked explicitly).
+This skill has eleven phases: **explain**, **login**, **session-logs**, **instrument**, **modify**, **inspect**, **switch-org**, **view**, **replay**, **db-branching**, and **templates**. Run individually or all at once (`wizard` runs login → instrument → replay; `explain` is a standalone read-only overview that requires no login; `session-logs` is standalone and does not require login; `modify` is only invoked explicitly or as a branch from Instrument's existing-SDK-usage menu; `inspect` is a standalone diagnostic (with optional one-shot fixes) invoked explicitly; `switch-org` is a standalone account action (requires auth) invoked explicitly; `view` is only invoked explicitly; `db-branching` is only invoked explicitly; `templates` is only invoked explicitly).
 
 **Natural-language aliases (these reuse an existing mode, not a separate one):** "explain Bitfab" / "what is Bitfab" → `explain`; "trace a new workflow" / "instrument a new flow" → `instrument`; "update-setup" / "update my tracing setup" / "adjust what's captured" → `modify` (NOT a plugin/SDK *version* bump, that's `$bitfab:update`); "debug-setup" / "debug my tracing setup" / "inspect my tracing" / "why aren't my traces showing up" / "what's instrumented" → `inspect` (for output-*quality* debugging use `$bitfab:assistant` instead); "switch org" / "change org" / "switch to the <name> org" / "I'm in the wrong org" → `switch-org`; "set up db branching" / "replay against my database" / "replay against the database at trace time" / "database snapshots for replay" → `db-branching`.
 
-Within an Instrument cycle, **instrumentation and the replay pipeline for the cycle's trace function are written together in the same cycle** once the trace plan is confirmed (see step 11). The Replay phase in `wizard` mode is therefore a coverage-verification/backfill sweep, it typically finds every key already wired up.
+Within an Instrument cycle, **instrumentation and the replay pipeline for the cycle's trace function are written together in the same cycle** once the trace plan is confirmed (see Instrument's write-instrumentation step). The Replay phase in `wizard` mode is therefore a coverage-verification/backfill sweep, it typically finds every key already wired up.
 
 **Before running plugin commands below**, resolve `BITFAB_PLUGIN_DIR` in the shell. Codex does not inject a plugin-root env var, so you must determine it. Copy and run this block verbatim, it auto-detects whichever install is active (dev, prod, or a custom `CODEX_HOME`):
 
@@ -45,7 +45,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 - **Canonical API surface (preferred for agents):** the dense reference pages at `/reference/typescript`, `/reference/python`, `/reference/ruby`, `/reference/go`. These list every public export, signature, type, default, and error semantic, no tutorials, no prose. Read these first.
 - **Cross-SDK shared semantics:** `/reference/overview` (invariants), `/reference/span-types` (the `SpanType` enum), `/reference/http` (wire protocol).
 - **Framework integrations (fetch when a framework is detected in step 1 of Instrument):** `/frameworks/langgraph`, `/frameworks/openai-agents`, `/frameworks/claude-agent-sdk`, `/frameworks/baml`. Each page documents the SDK's native handler/processor/wrapper for that framework, which is usually preferable to hand-wrapping every node/agent call with `withSpan`/`@span`.
-- **Tutorials / walkthroughs / replay script template:** the language-specific guide pages (`/typescript-sdk`, `/python-sdk`, `/ruby-sdk`, `/go-sdk`). Use these for the copy-pasteable replay script and the replay output contract. During Instrument, fetch the `#replay` section before step 11 so the replay script can be written alongside the instrumentation in the same cycle without re-fetching.
+- **Tutorials / walkthroughs / replay script template:** the language-specific guide pages (`/typescript-sdk`, `/python-sdk`, `/ruby-sdk`, `/go-sdk`). Use these for the copy-pasteable replay script and the replay output contract. During Instrument, fetch the `#replay` section before Instrument's write-instrumentation step so the replay script can be written alongside the instrumentation in the same cycle without re-fetching.
 
 **MCP tools:** This skill uses `get_bitfab_api_key`, `create_trace_plan`, and `get_trace_plan` (login / instrument / modify / view), `list_trace_functions` and `search_traces` (`inspect` and `templates`), `list_organizations` (`switch-org`), `get_database_connection_status` (`db-branching` only), and, for the `templates` mode only, `get_template_reference`, `get_template`, and `update_template`. All come from the **local plugin MCP server** (bundled with this plugin), exposed under the `mcp__Bitfab__*` prefix.
 
@@ -197,8 +197,6 @@ Authenticate with Bitfab and retrieve the API key.
    node -e "const fs=require('fs'),os=require('os'),p=require('path').join(os.homedir(),'.config/bitfab/config.json');fs.mkdirSync(require('path').dirname(p),{recursive:true});const c=JSON.parse(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'{}');c.sessionLogConsent=CONSENT;fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n')"
    ```
 
-**If running `login` only**, stop here and report the result.
-
 ## Session Logs
 
 **Run only when mode is `session-logs`.**
@@ -345,7 +343,7 @@ Bitfab captures every AI function call, inputs, outputs, and errors, so you can 
 
 **Run only when mode is `wizard`, `instrument` or `modify`.**
 
-Adjust an **existing** trace setup. Requires existing SDK usage in the codebase, if none exists, run Instrument first. Triggered explicitly by `$bitfab:setup modify`, or selected from the choice prompt at Instrument step 2 when existing SDK usage is found.
+Adjust an **existing** trace setup. Requires existing SDK usage in the codebase, if none exists, run Instrument first. Triggered explicitly by `$bitfab:setup modify`, or selected from the choice prompt at Instrument's existing-SDK-usage menu when existing SDK usage is found.
 
 Every Modify cycle targets **exactly one** trace function. Never batch multiple trace functions in one cycle, if the user wants more, loop via the step 7 menu.
 
@@ -356,16 +354,16 @@ Every Modify cycle targets **exactly one** trace function. Never batch multiple 
    1. Call `mcp__Bitfab__get_trace_plan` with `{ traceFunctionKey: "<chosen key>" }` (no `planId`). Two outcomes:
       - **Prior plan found**: parse the JSON block in the response. Use its `tree` as the `before` `TracePlanTree` and its `capturedNodeIds` as the current capture set. You do not need to re-read the instrumented files. Skip step 2.
       - **"No prior confirmed trace plan found"**: there is no plan for this key yet (key created outside the skill, or first Modify cycle that predates this column). Fall through to step 2.
-   2. **Code-reading fallback.** Read the instrumented files to map the existing span tree into a `TracePlanTree` (`{ rootId, nodes: { [id]: TraceNode } }`, same shape used in Instrument step 10). Each `TraceNode` carries `id`, `name`, `kind` ("manual" | "auto" | "pure"), `file`, `line`, `signature`, `parentId`, `childIds`, plus `framework` for `[auto]` lines.
+   2. **Code-reading fallback.** Read the instrumented files to map the existing span tree into a `TracePlanTree` (`{ rootId, nodes: { [id]: TraceNode } }`, same shape used in Instrument's build-trace-plan step). Each `TraceNode` carries `id`, `name`, `kind` ("manual" | "auto" | "pure"), `file`, `line`, `signature`, `parentId`, `childIds`, plus `framework` for `[auto]` lines.
 
    Either way, hold the `before` tree in memory, it seeds the `after` tree you build in step 4 and becomes the left-hand side of the inline-fallback diff in step 5. Do not present it yet.
-4. **Build the modified trace plan as a `TracePlanTree` under the same PURELY ADDITIVE constraint as Instrument step 10.** Start from the `before` tree built in step 3 and produce an `after` tree of the same shape (`{ rootId, nodes: { [id]: TraceNode } }`) that applies the user's requested modifications. Reuse node ids unchanged for nodes that survive, that lets the trace plan UI show only what actually changes, and mint new ids for added nodes.
+4. **Build the modified trace plan as a `TracePlanTree` under the same PURELY ADDITIVE constraint as Instrument's build-trace-plan step.** Start from the `before` tree built in step 3 and produce an `after` tree of the same shape (`{ rootId, nodes: { [id]: TraceNode } }`) that applies the user's requested modifications. Reuse node ids unchanged for nodes that survive, that lets the trace plan UI show only what actually changes, and mint new ids for added nodes.
 
    **If the user didn't request anything specific** (no modifications were named in the skill invocation or earlier in the conversation), produce an `after` tree identical to the `before` tree. Don't invent changes. The user will edit the capture set directly in the UI in step 5.
 
    The modified tree must be implementable without behavior changes. If a requested modification requires awaiting a stream that wasn't awaited, delaying a call, reordering operations, blocking a callback, or restructuring control flow, tell the user which part doesn't fit and why, and ask them to refine the request (or suggest splitting into multiple cycles). Never present a behavior-changing approach as an option.
 
-   **Every captured node MUST include `sampleInput` and `sampleOutput`**: same hard rule as Instrument step 10. Carry samples forward unchanged for surviving nodes; for newly added nodes (intermediate spans, deeper leaves, a new upstream/downstream root), construct realistic example values from the function's parameter and return types (Read the file and its return-type imports if needed). Do not advance to step 5 with a captured node missing either field.
+   **Every captured node MUST include `sampleInput` and `sampleOutput`**: same hard rule as Instrument's build-trace-plan step. Carry samples forward unchanged for surviving nodes; for newly added nodes (intermediate spans, deeper leaves, a new upstream/downstream root), construct realistic example values from the function's parameter and return types (Read the file and its return-type imports if needed). Do not advance to step 5 with a captured node missing either field.
 
    **Include surrounding code as `pure` context nodes** so the modified capture is legible inside its codebase context and the user can toggle additional nodes into the capture directly in the UI without leaving the page. The test for inclusion is **"would the user plausibly want this as its own span?"**: anything they might promote to a wider root, wrap as a deeper child, or add as a peer at the same depth. Walk in three directions:
    - **~10 callers above the root**: candidates for **promoting the root upward** to a wider scope. Walk via Grep (callers of the root, then callers of those, etc.) and attach each as a `pure` ancestor. Stop at process entry points (HTTP handlers, queue workers, CLI `main`, cron jobs, page handlers, framework boot, there is no useful root above those) or when you've gathered ~10 nodes.
@@ -375,7 +373,7 @@ Every Modify cycle targets **exactly one** trace function. Never batch multiple 
    Mark every surrounding node with `kind: "pure"` (uncaptured) and **do not** add their ids to `capturedNodeIds`. They serve two ends: **legibility** (the captured set sits inside its surrounding code so the user sees what is and isn't traced) and **modification** (they are the levers in the UI for expanding capture deeper, broader, or sideways).
 
    When applying a requested modification, read the relevant signatures so the plan stays accurate: for added context, name the exact keys/values and the span they attach to; for new instrumented spans, read each callee's signature and pick a type annotation (`function`, `llm`, `tool`, `agent`, `handoff`); for span removals, list each by name and confirm the underlying call is left untouched; for a new upstream/downstream root, read the new function's signature and confirm it still covers the interesting LLM/tool activity (upstream) or remains a common ancestor of every LLM/tool span (downstream).
-5. **Send the modified plan straight to the trace plan UI, it is the user's primary surface for confirming or editing the change**, not the inline before/after diff. The user can adjust the captured set directly in the UI (selecting/deselecting any of the surrounding `pure` context nodes added in step 4). Confirm in the UI = apply the diff. Cancel = ask the user what they want to change. Same delivery pattern as Instrument step 10.
+5. **Send the modified plan straight to the trace plan UI, it is the user's primary surface for confirming or editing the change**, not the inline before/after diff. The user can adjust the captured set directly in the UI (selecting/deselecting any of the surrounding `pure` context nodes added in step 4). Confirm in the UI = apply the diff. Cancel = ask the user what they want to change. Same delivery pattern as Instrument's build-trace-plan step.
 
    1. **Post the modified plan and open the UI.** Call `mcp__Bitfab__create_trace_plan` with `{ language, tree, capturedNodeIds, traceFunctionKey }` (and `stats` if you have a sample run from the existing trace function):
       - `tree`, the modified `after` `TracePlanTree` from step 4, with the ~10 surrounding callers / ~10 surrounding callees included as `pure` context nodes.
@@ -405,7 +403,7 @@ Every Modify cycle targets **exactly one** trace function. Never batch multiple 
    > B) **Expand details**: re-render the inline diff in the expanded view (fallback only) → step 5
    > C) **Modifications**: ask what the user wants to change, then return to building the modified plan → step 4
    > D) **Abort entirely**: drop this cycle without writing edits → step 1 of the Cleanup phase
-6. **Apply the changes, purely additive to behavior.** Same rules as Instrument step 11: never change arguments, return values, error handling, variable names, types, control flow, or code structure. Removing a `withSpan`/`@span` wrapper is the only structural edit allowed, and only when it leaves the wrapped call, its arguments, and its return value untouched. The trace function key from step 2 stays the same, do not rename keys. Batch repetitive edits in parallel (one message, many Edit calls).
+6. **Apply the changes, purely additive to behavior.** Same rules as Instrument's write-instrumentation step: never change arguments, return values, error handling, variable names, types, control flow, or code structure. Removing a `withSpan`/`@span` wrapper is the only structural edit allowed, and only when it leaves the wrapped call, its arguments, and its return value untouched. The trace function key from step 2 stays the same, do not rename keys. Batch repetitive edits in parallel (one message, many Edit calls).
 7. Tell the user how to run the app to generate a trace with the modified setup, exact command(s). Do NOT run it yourself. Then **MANDATORY STOP**: ask the user:
    > We recommend **A**: generate a trace with the modified setup so the diff is observable end-to-end.
 
@@ -413,7 +411,7 @@ Every Modify cycle targets **exactly one** trace function. Never batch multiple 
    > B) **Modify another trace function**: returns to step 2 → step 2
    > C) **Done**: stop here → step 1 of the Cleanup phase
 
-   B returns to step 2. A and C exit the Modify loop. After exit, stop (Modify does not auto-continue to Replay, the user can invoke `$bitfab:setup replay` separately).
+   B returns to step 2. A and C exit the Modify loop to cleanup (Modify does not auto-continue to Replay, the user can invoke `$bitfab:setup replay` separately).
 
 ## Inspect
 
@@ -562,7 +560,7 @@ Create or update replay scripts for instrumented trace functions. Requires instr
 
 Replay scripts let the team regression-test any trace function against production data with one command, they fetch historical traces, re-run them through the current code, and report old vs. new outputs side-by-side. Note: **Go does not support replay**: skip this phase if the project is Go-only.
 
-**Relationship to Instrument.** When Replay runs via `wizard` mode or directly after Instrument, most (often all) trace function keys already have pipelines because Instrument step 11 writes them alongside the instrumentation edits in the same cycle. This phase is then a coverage + contract-compliance sweep. Run it standalone (`$bitfab:setup replay`) to catch pre-existing trace function keys that predate that step or were added outside the skill.
+**Relationship to Instrument.** When Replay runs via `wizard` mode or directly after Instrument, most (often all) trace function keys already have pipelines because Instrument's write-instrumentation step writes them alongside the instrumentation edits in the same cycle. This phase is then a coverage + contract-compliance sweep. Run it standalone (`$bitfab:setup replay`) to catch pre-existing trace function keys that predate that step or were added outside the skill.
 
 **Source of truth:** two pages, read both before creating or modifying a replay script. Do not improvise from memory.
 - **Canonical `replay` API signature, options, and return shape:** `/reference/typescript#replay`, `/reference/python#replay`, `/reference/ruby#replay` (Go has no replay). Use this for the exact field names (`result` / `originalOutput` vs `original_output`), default `limit`, `maxConcurrency`/`max_concurrency`, error behavior.
@@ -570,10 +568,9 @@ Replay scripts let the team regression-test any trace function against productio
 
 1. **Gather all trace function keys** by searching for SDK patterns (`getFunction("key")`, `get_function("key")`, `bitfab_function "key"`, `WithFunctionName("key")`, plus keyed framework handlers: `getLangGraphCallbackHandler("key")` / `get_langgraph_callback_handler("key")` (or the LangChain-named aliases) and `getClaudeAgentHandler("key")` / `get_claude_agent_handler("key")`). This is the source of truth for what replay must cover.
 2. **Search for existing replay scripts**: files matching `scripts/replay.*`, `scripts/*replay*`, or any file importing/calling the SDK's replay API.
-3. **Compare coverage.** Replay is non-interactive once entered, do not ask the user whether to create or add scripts:
-   - If replay scripts exist and cover all keys: verify each one already conforms to the Replay Output Contract in the docs (emits the full `ReplayResult` as one JSON block, including every item's `traceId`/`trace_id`, `durationMs`/`duration_ms`, `tokens`, and `model`, never just counts or per-field log lines) and supports all three optional flags (`--code-change`, `--experiment-group-id`, `--trace-ids`). If any don't conform or are missing flags, fix them; otherwise report up to date and stop.
-   - If replay scripts exist but are missing trace function keys: add the missing scripts in step 4.
-   - If no replay scripts exist: create them in step 4.
+3. **Compare coverage.** Replay is non-interactive once entered, do not ask the user whether to create or add scripts. Determine which case applies:
+   - **All keys already have replay scripts:** verify each one conforms to the Replay Output Contract in the docs (emits the full `ReplayResult` as one JSON block, including every item's `traceId`/`trace_id`, `durationMs`/`duration_ms`, `tokens`, and `model`, never just counts or per-field log lines) and supports all three optional flags (`--code-change`, `--experiment-group-id`, `--trace-ids`). Fix any that don't conform or are missing flags. Once every script is present and conformant, coverage is complete, there is nothing to create.
+   - **Some keys are missing scripts, or no replay scripts exist yet:** the missing scripts must be created next.
 4. **Create the replay script** following the example in the SDK reference's Replay section (`https://docs.bitfab.ai/<language>-sdk#replay`), adapted to this codebase. The non-negotiables (enforced by the docs page, repeated here so the script review catches them):
    - **Ground the script in the docs, not memory.** Before writing the replay call, fetch `https://docs.bitfab.ai/reference/<language>#replay` for the canonical signature and return shape, then `https://docs.bitfab.ai/<language>-sdk#replay` for the script template and output contract. Quote the exact function signature + return-shape fields verbatim in your plan. Field names differ per language (Python: `result`, `original_output`; TypeScript: `result`, `originalOutput`; Ruby: `:result`, `:original_output`), do not paraphrase or invent names like `new_output`/`trace_id`.
    - **For keys with a decorated function in the app: pass the decorated function itself, not an undecorated wrapper.** The trace function key is read from the decorator/attribute on the function you pass in. (Handler-instrumented keys have no decorated function; see the next bullet.) For Python class methods, pass `Class.method` (or a bound `instance.method`). For TypeScript, the key is passed as a string arg alongside the function, use the exact key from the instrumented code. For Ruby, pass `receiver` + `method_name:` + `trace_function_key:` matching the `traceable` decoration.
@@ -593,7 +590,7 @@ Replay scripts let the team regression-test any trace function against productio
    - **Follow the docs' Replay Output Contract**: capture the full `ReplayResult` (items + `testRunId` + `testRunUrl`, including `durationMs`/`duration_ms`, `tokens`, and `model` per item) into one variable and emit it as a single JSON object to stdout via `JSON.stringify(result, null, 2)` (TS), `json.dumps(result, indent=2, default=str)` (Python), or `JSON.pretty_generate(result)` (Ruby). A subagent reading the output must be able to `JSON.parse` / `json.loads` one contiguous block, do not replace the JSON dump with per-field log lines, counts, lengths, hashes, or previews. Writing the same JSON to `scripts/replay-result.json` in parallel is optional but encouraged.
    - Print a short human-readable summary (total replayed, same, changed, errors) and the test run URL ahead of the JSON dump
    - Live in a `scripts/` directory (or the project's existing scripts location)
-5. **Safety net for legacy instrumentation.** If an already-instrumented function (introduced before step 6's serializability gate, or via another path) can't be invoked from the replay script, most commonly because it isn't exported, is defined inline in a route handler, or takes unserializable inputs, ask the user offering step 6's boundary resolutions:
+5. **Safety net for legacy instrumentation.** If an already-instrumented function (introduced before Instrument's trace-boundary serializability gate, or via another path) can't be invoked from the replay script, most commonly because it isn't exported, is defined inline in a route handler, or takes unserializable inputs, ask the user offering Instrument's trace-boundary resolutions:
 
    **Handler-instrumented keys are not a safety-net case.** A key registered only via a framework handler has no decorated function by design; create its pipeline with the key-based replay pattern from step 4 instead of offering these resolutions.
 
@@ -617,7 +614,7 @@ Set up **per-trace database branching for replay** so the team can re-run a hist
 
 **Source of truth:** read https://docs.bitfab.ai/db-branching (the end-to-end, per-language setup) and your SDK's reference (`/reference/typescript`, `/reference/python`, `/reference/ruby`) for the exact `ReplayEnvironment` / `replay` signatures before editing any code. The construction call, the replay option, and the accessors differ per SDK, do not improvise from memory.
 
-1. **Confirm the SDK language.** DB-branching replay is available for **TypeScript, Python, and Ruby**. If the project is **Go**, stop and tell the user Go has no replay, so this doesn't apply.
+1. **Confirm the SDK language.** DB-branching replay is available for **TypeScript, Python, and Ruby**. If the project is **Go**, tell the user Go has no replay so this doesn't apply, and route to cleanup.
 
    **Check authentication.** Run:
 
@@ -627,7 +624,7 @@ Set up **per-trace database branching for replay** so the team can re-run a hist
 
    If it reports not authenticated, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/login.js"` (blocks until the browser login completes), then continue.
 
-   **Locate the replay script(s)** you'll edit later: search for files importing/calling the SDK's `replay` (commonly under `scripts/`). If there are **no** replay scripts yet, tell the user to run `$bitfab:setup replay` first to create them, then come back, DB-branching augments an existing replay script, it does not create one from scratch. No client-config edit is needed: snapshot capture is always on, so there is nothing to add to `new Bitfab({ ... })`.
+   **Locate the replay script(s)** you'll edit later: search for files importing/calling the SDK's `replay` (commonly under `scripts/`). If there are **no** replay scripts yet, tell the user to run `$bitfab:setup replay` first to create them, then come back (route to cleanup), DB-branching augments an existing replay script, it does not create one from scratch. No client-config edit is needed: snapshot capture is always on, so there is nothing to add to `new Bitfab({ ... })`.
 2. Call `mcp__Bitfab__get_database_connection_status` once to read the current state:
    - **`connected`**: the database is already connected and provisioned. Tell the user, and continue to the next step.
    - **`none`**: no database is connected yet. The tool's response includes the exact **Integrations** URL. Relay it to the user and ask them to open it, go to the **Database** section, and paste their Postgres connection string. Provisioning the branchable copy takes a few minutes.
@@ -780,7 +777,7 @@ Templates control how a span's input / output renders in the Bitfab UI. They are
 
    No sessionId argument is needed; do not track or look up one. This is silent housekeeping: never narrate it, reason about whether a session was opened, or report the outcome to the user (no "closing Studio", no "nothing to close").
 
-## Refactor confirmation (applies to Instrument step 8 and Replay step 5)
+## Refactor confirmation (applies to Instrument's workflow-selection step and Replay's safety-net step)
 
 Whenever the user picks "refactor to extract a pure core" (or any option that modifies existing functions/call sites, not just adds new wrappers), you must:
 
@@ -795,9 +792,9 @@ Whenever the user picks "refactor to extract a pure core" (or any option that mo
 
 3. **Ask the user** with exactly two options:
    - **"Apply refactor"**: proceed to write the changes
-   - **"Cancel"**: return to the previous choice prompt (step 8's (a)/(b)/(c), or Replay step 5's three-option prompt) so the user can pick a different resolution
+   - **"Cancel"**: return to the previous choice prompt (Instrument's workflow-selection (a)/(b)/(c), or Replay's safety-net three-option prompt) so the user can pick a different resolution
 
-Never modify existing code on a refactor path without completing this three-step confirmation. Adding new instrumentation wrappers to unchanged functions is not a refactor, this rule does not apply to step 11's purely-additive instrumentation.
+Never modify existing code on a refactor path without completing this three-step confirmation. Adding new instrumentation wrappers to unchanged functions is not a refactor, this rule does not apply to Instrument's write-instrumentation step (purely-additive instrumentation).
 
 ## Reference
 
