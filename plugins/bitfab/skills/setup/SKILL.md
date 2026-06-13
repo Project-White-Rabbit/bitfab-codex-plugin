@@ -1,6 +1,6 @@
 ---
 name: setup
-description: "Set up and maintain Bitfab tracing for AI features. TRIGGER when: user wants to set up Bitfab, instrument code, add tracing/observability for LLM or agent calls, observe AI calls, add evaluation, trace LLM functions, trace a new workflow, change what an existing trace captures, inspect or debug their tracing setup (what's instrumented, why traces aren't showing up), or understand what Bitfab is; or says anything like 'instrument', 'add tracing', 'trace my code', 'set up observability', 'hook up Bitfab', 'start tracking', 'trace a new workflow', 'update my tracing setup', 'why aren't my traces showing up', 'what is Bitfab', 'set up database branching', 'replay against my database state at trace time'. SKIP when: user is (a) improving the QUALITY of a traced function's outputs, fixing failures, pass rates, labeling, running experiments (use bitfab:assistant); or (b) upgrading the plugin/SDK to a newer *version* (use bitfab:update).. Invoke with $bitfab:setup [<mode>] [<what to do>]."
+description: "Set up and maintain Bitfab tracing for AI features. TRIGGER when: user wants to set up Bitfab, instrument code, add tracing/observability for LLM or agent calls, observe AI calls, add evaluation, trace LLM functions, trace a new workflow, change what an existing trace captures, inspect or debug their tracing setup (what's instrumented, why traces aren't showing up), or understand what Bitfab is; or says anything like 'instrument', 'add tracing', 'trace my code', 'set up observability', 'hook up Bitfab', 'start tracking', 'trace a new workflow', 'update my tracing setup', 'why aren't my traces showing up', 'what is Bitfab', 'set up database snapshots', 'replay against my database state at trace time'. SKIP when: user is (a) improving the QUALITY of a traced function's outputs, fixing failures, pass rates, labeling, running experiments (use bitfab:assistant); or (b) upgrading the plugin/SDK to a newer *version* (use bitfab:update).. Invoke with $bitfab:setup [wizard|explain|login|instrument|modify|inspect|switch-org|view|replay|db-snapshot|session-logs|templates] [<what to do>]."
 ---
 
 # Bitfab Setup
@@ -20,9 +20,9 @@ description: "Set up and maintain Bitfab tracing for AI features. TRIGGER when: 
 - Stop polling only when: (a) the process exits 0 with its completion summary, (b) the process exits non-zero, or (c) the user explicitly cancels.
 - When the process exits, immediately continue with the next step, do not wait for another user message.
 
-This skill has eleven phases: **explain**, **login**, **session-logs**, **instrument**, **modify**, **inspect**, **switch-org**, **view**, **replay**, **db-branching**, and **templates**. Run individually or all at once (`wizard` runs login → instrument → replay; `explain` is a standalone read-only overview that requires no login; `session-logs` is standalone and does not require login; `modify` is only invoked explicitly or as a branch from Instrument's existing-SDK-usage menu; `inspect` is a standalone diagnostic (with optional one-shot fixes) invoked explicitly; `switch-org` is a standalone account action (requires auth) invoked explicitly; `view` is only invoked explicitly; `db-branching` is only invoked explicitly; `templates` is only invoked explicitly).
+This skill has eleven phases: **explain**, **login**, **session-logs**, **instrument**, **modify**, **inspect**, **switch-org**, **view**, **replay**, **db-snapshot**, and **templates**. Run individually or all at once (`wizard` runs login → instrument → replay; `explain` is a standalone read-only overview that requires no login; `session-logs` is standalone and does not require login; `modify` is only invoked explicitly or as a branch from Instrument's existing-SDK-usage menu; `inspect` is a standalone diagnostic (with optional one-shot fixes) invoked explicitly; `switch-org` is a standalone account action (requires auth) invoked explicitly; `view` is only invoked explicitly; `db-snapshot` is only invoked explicitly; `templates` is only invoked explicitly).
 
-**Natural-language aliases (these reuse an existing mode, not a separate one):** "explain Bitfab" / "what is Bitfab" → `explain`; "trace a new workflow" / "instrument a new flow" → `instrument`; "update-setup" / "update my tracing setup" / "adjust what's captured" → `modify` (NOT a plugin/SDK *version* bump, that's `$bitfab:update`); "debug-setup" / "debug my tracing setup" / "inspect my tracing" / "why aren't my traces showing up" / "what's instrumented" → `inspect` (for output-*quality* debugging use `$bitfab:assistant` instead); "switch org" / "change org" / "switch to the <name> org" / "I'm in the wrong org" → `switch-org`; "set up db branching" / "replay against my database" / "replay against the database at trace time" / "database snapshots for replay" → `db-branching`.
+**Natural-language aliases (these reuse an existing mode, not a separate one):** "explain Bitfab" / "what is Bitfab" → `explain`; "trace a new workflow" / "instrument a new flow" → `instrument`; "update-setup" / "update my tracing setup" / "adjust what's captured" → `modify` (NOT a plugin/SDK *version* bump, that's `$bitfab:update`); "debug-setup" / "debug my tracing setup" / "inspect my tracing" / "why aren't my traces showing up" / "what's instrumented" → `inspect` (for output-*quality* debugging use `$bitfab:assistant` instead); "switch org" / "change org" / "switch to the <name> org" / "I'm in the wrong org" → `switch-org`; "set up db snapshots" / "set up db branching" / "replay against my database" / "replay against the database at trace time" / "database snapshots for replay" → `db-snapshot`.
 
 Within an Instrument cycle, **instrumentation and the replay pipeline for the cycle's trace function are written together in the same cycle** once the trace plan is confirmed (see Instrument's write-instrumentation step). The Replay phase in `wizard` mode is therefore a coverage-verification/backfill sweep, it typically finds every key already wired up.
 
@@ -47,7 +47,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 - **Framework integrations (fetch when a framework is detected in step 1 of Instrument):** `/frameworks/langgraph`, `/frameworks/openai-agents`, `/frameworks/claude-agent-sdk`, `/frameworks/baml`. Each page documents the SDK's native handler/processor/wrapper for that framework, which is usually preferable to hand-wrapping every node/agent call with `withSpan`/`@span`.
 - **Tutorials / walkthroughs / replay script template:** the language-specific guide pages (`/typescript-sdk`, `/python-sdk`, `/ruby-sdk`, `/go-sdk`). Use these for the copy-pasteable replay script and the replay output contract. During Instrument, fetch the `#replay` section before Instrument's write-instrumentation step so the replay script can be written alongside the instrumentation in the same cycle without re-fetching.
 
-**MCP tools:** This skill uses `get_bitfab_api_key`, `create_trace_plan`, and `get_trace_plan` (login / instrument / modify / view), `list_trace_functions` and `search_traces` (`inspect` and `templates`), `list_organizations` (`switch-org`), `get_database_connection_status` (`db-branching` only), and, for the `templates` mode only, `get_template_reference`, `get_template`, and `update_template`. All come from the **local plugin MCP server** (bundled with this plugin), exposed under the `mcp__Bitfab__*` prefix.
+**MCP tools:** This skill uses `get_bitfab_api_key`, `create_trace_plan`, and `get_trace_plan` (login / instrument / modify / view), `list_trace_functions` and `search_traces` (`inspect` and `templates`), `list_organizations` (`switch-org`), `get_database_connection_status` (`db-snapshot` only), and, for the `templates` mode only, `get_template_reference`, `get_template`, and `update_template`. All come from the **local plugin MCP server** (bundled with this plugin), exposed under the `mcp__Bitfab__*` prefix.
 
 | Invocation | Action |
 |---|---|
@@ -60,7 +60,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 | `$bitfab:setup switch-org` | Switch which Bitfab org the plugin reads and writes (replaces the local API key) |
 | `$bitfab:setup view` | Open the trace planner UI for an existing trace function (read-only) |
 | `$bitfab:setup replay` | Create or update replay scripts for instrumented workflows |
-| `$bitfab:setup db-branching` | Set up per-trace database branching so replay runs against the DB state at trace time (TypeScript, Python, Ruby) |
+| `$bitfab:setup db-snapshot` | Set up per-trace database snapshots so replay runs against the DB state at trace time (TypeScript, Python, Ruby) |
 | `$bitfab:setup session-logs` | Opt in or out of session log collection (no login required) |
 | `$bitfab:setup templates [<key>]` | Iterate on the span-rendering templates for one trace function |
 
@@ -607,13 +607,13 @@ Replay scripts let the team regression-test any trace function against productio
 
    **If the user picks "Refactor" (or a boundary move that requires rewriting callers), apply the "Refactor confirmation" rule below, present a refactor plan labeled as *visibility* or *structural* and get a second confirmation before modifying code.**
 
-## DB Branching
+## DB Snapshot
 
-**Run only when mode is `db-branching`.**
+**Run only when mode is `db-snapshot`.**
 
-Set up **per-trace database branching for replay** so the team can re-run a historical trace against the database state that existed *when the trace was captured*, not today's data. This is what makes replay trustworthy for any code that reads stored state (a refund decision over a since-cancelled order, a retrieval step over last week's rows). Triggered explicitly by `$bitfab:setup db-branching`, never reached from `wizard`.
+Set up **per-trace database snapshots for replay** so the team can re-run a historical trace against the database state that existed *when the trace was captured*, not today's data. This is what makes replay trustworthy for any code that reads stored state (a refund decision over a since-cancelled order, a retrieval step over last week's rows). Triggered explicitly by `$bitfab:setup db-snapshot`, never reached from `wizard`.
 
-**Available for TypeScript, Python, and Ruby** (the SDKs with `ReplayEnvironment`). Go has no replay, so DB-branching replay does not apply, if the project is Go, say so and stop.
+**Available for TypeScript, Python, and Ruby** (the SDKs with `ReplayEnvironment`). Go has no replay, so DB-snapshot replay does not apply, if the project is Go, say so and stop.
 
 **Capture is automatic, there is nothing to turn on.** Every root trace already pins the wall-clock instant it ran (no client config required), so any trace can later be replayed against its historical DB state. Setup is therefore just two pieces:
 1. **Connect the database once** in the Bitfab dashboard. The source database can be **any Postgres**: Bitfab provisions a branchable managed copy from it. A one-time, dashboard-side step.
@@ -621,7 +621,7 @@ Set up **per-trace database branching for replay** so the team can re-run a hist
 
 **Source of truth:** read https://docs.bitfab.ai/db-branching (the end-to-end, per-language setup) and your SDK's reference (`/reference/typescript`, `/reference/python`, `/reference/ruby`) for the exact `ReplayEnvironment` / `replay` signatures before editing any code. The construction call, the replay option, and the accessors differ per SDK, do not improvise from memory.
 
-1. **Confirm the SDK language.** DB-branching replay is available for **TypeScript, Python, and Ruby**. If the project is **Go**, tell the user Go has no replay so this doesn't apply, and route to cleanup.
+1. **Confirm the SDK language.** DB-snapshot replay is available for **TypeScript, Python, and Ruby**. If the project is **Go**, tell the user Go has no replay so this doesn't apply, and route to cleanup.
 
    **Check authentication.** Run:
 
@@ -631,7 +631,7 @@ Set up **per-trace database branching for replay** so the team can re-run a hist
 
    If it reports not authenticated, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/login.js"` (blocks until the browser login completes), then continue.
 
-   **Locate the replay script(s)** you'll edit later: search for files importing/calling the SDK's `replay` (commonly under `scripts/`). If there are **no** replay scripts yet, tell the user to run `$bitfab:setup replay` first to create them, then come back (route to cleanup), DB-branching augments an existing replay script, it does not create one from scratch. No client-config edit is needed: snapshot capture is always on, so there is nothing to add to `new Bitfab({ ... })`.
+   **Locate the replay script(s)** you'll edit later: search for files importing/calling the SDK's `replay` (commonly under `scripts/`). If there are **no** replay scripts yet, tell the user to run `$bitfab:setup replay` first to create them, then come back (route to cleanup), DB-snapshot augments an existing replay script, it does not create one from scratch. No client-config edit is needed: snapshot capture is always on, so there is nothing to add to `new Bitfab({ ... })`.
 2. Call `mcp__Bitfab__get_database_connection_status` once to read the current state:
    - **`connected`**: the database is already connected and provisioned. Tell the user, and continue to the next step.
    - **`none`**: no database is connected yet. The tool's response includes the exact **Integrations** URL. Relay it to the user and ask them to open it, go to the **Database** section, and paste their Postgres connection string. Provisioning the branchable copy takes a few minutes.
