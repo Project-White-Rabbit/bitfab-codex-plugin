@@ -228,7 +228,7 @@ Check that this trace function has both instrumentation and a replay script.
    > B) **Pick a different function** → step 1 of the Phase 1: Identify the Trace Function phase
    > C) **Stop** → step 1 of the Cleanup phase
 
-   If the user chooses **"Create replay now"**, create the replay script inline: fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript#replay` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk#replay`), then write a new replay script following the template. The script must accept `--limit N`, `--trace-ids`, `--code-change <path>`, and `--experiment-group-id <uuid>` flags, and emit the full `ReplayResult` as JSON to stdout per the Replay Output Contract. Do NOT invoke `$bitfab:setup replay` as a separate skill. After creating the script, check its capabilities.
+   If the user chooses **"Create replay now"**, create the replay script inline: fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript#replay` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk#replay`), then write a new replay script following the template. The script must accept `--limit N`, `--trace-ids`, `--code-change <path>`, `--experiment-group-id <uuid>`, and `--dataset-id <uuid>` flags, and emit the full `ReplayResult` as JSON to stdout per the Replay Output Contract. Do NOT invoke `$bitfab:setup replay` as a separate skill. After creating the script, check its capabilities.
 
    **Handler-instrumented keys (no decorated root function) are replayable too.** If the key is registered via a framework handler (`get_langgraph_callback_handler("key")`, `get_claude_agent_handler("key")`, or the TS equivalents) rather than `@span`/`withSpan`, follow the docs' "Replaying handler-instrumented functions" section: pass the handler's key plus a plain callable to `replay()` (the SDK wraps it internally), re-invoking the framework entrypoint with a freshly constructed environment (safe no-op substitutes for billing callbacks and other side-effectful wiring). On SDKs that predate explicit-key replay, wrap the callable under the same key yourself. Never report a handler-instrumented function as not replayable.
 3. **Detect replay script capabilities.** Check what the replay script supports. These flags determine how experiment results are tracked and displayed in Phase 5. **If you already ran this step for the same trace function earlier in this session, skip it and continue. Re-run if the user switched functions via "Pick a different function".**
@@ -241,12 +241,14 @@ Check that this trace function has both instrumentation and a replay script.
    |----------|------|-----------------|
    | `code-change` or `code_change` | `supportsCodeChanges` | Code diffs attached to each experiment in the dashboard |
    | `experiment-group-id` or `experiment_group_id` | `supportsExperimentGroups` | Live streaming of results in Studio as replay runs |
+   | `dataset-id` or `dataset_id` | `supportsDatasetId` | Durable attribution of the experiment to its dataset (shows under the dataset's experiments) |
    | `traceId` or `trace_id` in the output/print section | `supportsReplayTraceIds` (verified against the SDK `.d.ts` in step 3, re-confirmed post-replay) | Verdict persistence, cross-iteration comparison, Studio experiments page |
 
    `supportsInputAdapters` is **not** a script-grep flag (the script gains an `adaptInputs` / `adapt_inputs` argument only after a signature actually drifts, in `adapt-replay-inputs`). It is determined SOLELY by the installed SDK in step 3 below.
 
    **3. Verify the installed SDK actually supports the detected flags.** The replay script may accept flags that the installed SDK silently ignores. Check the actual SDK dist (not the script) for each capability:
    - For `supportsExperimentGroups`: grep the installed SDK's replay JS file (e.g. `node_modules/.pnpm/@bitfab+sdk@*/node_modules/@bitfab/sdk/dist/replay-*.js`) for `experimentGroupId`. If absent, the SDK drops the option silently.
+   - For `supportsDatasetId`: grep the same file for `datasetId` (TS) or `dataset_id` (the installed `bitfab/replay.py` / gem `replay.rb`). If absent, the SDK predates dataset attribution; mark `supportsDatasetId` **false** (the server still derives the link from trace lineage, so this only loses the durable column).
    - For `supportsCodeChanges`: grep the same file for `codeChangeDescription` or `code_change_description`.
    - For `supportsReplayTraceIds`: grep the installed SDK's **type declaration** for a `traceId` field on the `ReplayItem` interface, `grep -A3 "interface ReplayItem" node_modules/.pnpm/@bitfab+sdk@*/node_modules/@bitfab/sdk/dist/index.d.ts` (or `node_modules/@bitfab/sdk/dist/index.d.ts`). If `ReplayItem.traceId` is **absent**, the installed SDK does not surface replay trace IDs (the per-item mapping was added in a later release, e.g. 0.13.4 lacks it, 0.13.6 has it), mark `supportsReplayTraceIds` **false**. This is a definitive **pre-replay** signal; the later `check-trace-id-support` step still re-confirms from the actual replay output.
    - For `supportsInputAdapters`: grep the installed SDK for the `replay()` option: `grep "adaptInputs" node_modules/.pnpm/@bitfab+sdk@*/node_modules/@bitfab/sdk/dist/index.d.ts` (TS), or `adapt_inputs` in the installed `bitfab/replay.py` (Python) / the installed gem's `replay.rb` (Ruby). If absent, the SDK predates the input-adapter hook; mark `supportsInputAdapters` **false**. The replay script needs no pre-wiring for this: an adapter (its own file + an import) is added only when a signature actually drifts, in the `adapt-replay-inputs` step (Phase 5).
@@ -263,6 +265,7 @@ Check that this trace function has both instrumentation and a replay script.
    >
    > [if !supportsCodeChanges] **Code changes**: edits won't appear in the experiment dashboard
    > [if !supportsExperimentGroups] **Experiment groups**: no live streaming; results appear in Studio after each run
+   > [if !supportsDatasetId] **Dataset attribution**: the experiment won't be durably linked to its dataset (still findable via the trace-lineage fallback; fixed by regenerating the script / upgrading the SDK)
    > [if !supportsReplayTraceIds] **Replay trace IDs**: experiment results can't be persisted or compared across iterations (your SDK needs an upgrade)
    >
    > [if !supportsInputAdapters] **Input adapters**: replay can't recover traces when the function's signature drifts after capture (fixed by upgrading the SDK)"
@@ -281,10 +284,11 @@ Check that this trace function has both instrumentation and a replay script.
    **2. Regenerate the replay script.** Locate the replay script for this trace function (found in `detect-replay-capabilities`). Fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript#replay` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk#replay`). Then edit the script to add the missing flags:
    - **`--code-change <path>`**: parse the JSON file, pass `codeChangeDescription` and `codeChangeFiles` to `replay()`
    - **`--experiment-group-id <uuid>`**: pass `experimentGroupId` to `replay()`
+   - **`--dataset-id <uuid>`**: pass `datasetId` to `replay()`. This is the **preferred way to replay a dataset**: passed alone (no `--trace-ids`) the server replays exactly the dataset's traces and durably attributes the experiment to the dataset. Adding this flag is what lets the replay step drop the hand-enumerated `--trace-ids` list.
    - **Replay Output Contract**: emit the full `ReplayResult` as one `JSON.stringify(result, null, 2)` block to stdout (including every item's `traceId`, `durationMs`, `tokens`, `model`). Human-readable summary goes to stderr.
    Do NOT invoke `$bitfab:setup replay` as a separate skill; edit the script inline here.
 
-   **3. Re-check capabilities.** After editing, re-check against the **installed SDK dist** (not just the script): grep the replay JS for `experimentGroupId` / `codeChangeDescription`, grep the SDK `.d.ts` for `ReplayItem.traceId` (the authoritative replay-trace-ID signal), and grep the SDK for `adaptInputs` / `adapt_inputs` (the input-adapter hook). Update the flags in working context. If any are still missing after both upgrades, note it but continue.
+   **3. Re-check capabilities.** After editing, re-check against the **installed SDK dist** (not just the script): grep the replay JS for `experimentGroupId` / `codeChangeDescription`, grep the SDK `.d.ts` for `ReplayItem.traceId` (the authoritative replay-trace-ID signal), and grep the SDK for `adaptInputs` / `adapt_inputs` (the input-adapter hook), and grep the SDK for `datasetId` / `dataset_id` (durable dataset attribution). Update the flags in working context. If any are still missing after both upgrades, note it but continue.
 
 ## Phase Investigate: Free-form Investigation
 
@@ -624,12 +628,14 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    |----------|------|-----------------|
    | `code-change` or `code_change` | `supportsCodeChanges` | Code diffs attached to each experiment in the dashboard |
    | `experiment-group-id` or `experiment_group_id` | `supportsExperimentGroups` | Live streaming of results in Studio as replay runs |
+   | `dataset-id` or `dataset_id` | `supportsDatasetId` | Durable attribution of the experiment to its dataset (shows under the dataset's experiments) |
    | `traceId` or `trace_id` in the output/print section | `supportsReplayTraceIds` (verified against the SDK `.d.ts` in step 3, re-confirmed post-replay) | Verdict persistence, cross-iteration comparison, Studio experiments page |
 
    `supportsInputAdapters` is **not** a script-grep flag (the script gains an `adaptInputs` / `adapt_inputs` argument only after a signature actually drifts, in `adapt-replay-inputs`). It is determined SOLELY by the installed SDK in step 3 below.
 
    **3. Verify the installed SDK actually supports the detected flags.** The replay script may accept flags that the installed SDK silently ignores. Check the actual SDK dist (not the script) for each capability:
    - For `supportsExperimentGroups`: grep the installed SDK's replay JS file (e.g. `node_modules/.pnpm/@bitfab+sdk@*/node_modules/@bitfab/sdk/dist/replay-*.js`) for `experimentGroupId`. If absent, the SDK drops the option silently.
+   - For `supportsDatasetId`: grep the same file for `datasetId` (TS) or `dataset_id` (the installed `bitfab/replay.py` / gem `replay.rb`). If absent, the SDK predates dataset attribution; mark `supportsDatasetId` **false** (the server still derives the link from trace lineage, so this only loses the durable column).
    - For `supportsCodeChanges`: grep the same file for `codeChangeDescription` or `code_change_description`.
    - For `supportsReplayTraceIds`: grep the installed SDK's **type declaration** for a `traceId` field on the `ReplayItem` interface, `grep -A3 "interface ReplayItem" node_modules/.pnpm/@bitfab+sdk@*/node_modules/@bitfab/sdk/dist/index.d.ts` (or `node_modules/@bitfab/sdk/dist/index.d.ts`). If `ReplayItem.traceId` is **absent**, the installed SDK does not surface replay trace IDs (the per-item mapping was added in a later release, e.g. 0.13.4 lacks it, 0.13.6 has it), mark `supportsReplayTraceIds` **false**. This is a definitive **pre-replay** signal; the later `check-trace-id-support` step still re-confirms from the actual replay output.
    - For `supportsInputAdapters`: grep the installed SDK for the `replay()` option: `grep "adaptInputs" node_modules/.pnpm/@bitfab+sdk@*/node_modules/@bitfab/sdk/dist/index.d.ts` (TS), or `adapt_inputs` in the installed `bitfab/replay.py` (Python) / the installed gem's `replay.rb` (Ruby). If absent, the SDK predates the input-adapter hook; mark `supportsInputAdapters` **false**. The replay script needs no pre-wiring for this: an adapter (its own file + an import) is added only when a signature actually drifts, in the `adapt-replay-inputs` step (Phase 5).
@@ -646,6 +652,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    >
    > [if !supportsCodeChanges] **Code changes**: edits won't appear in the experiment dashboard
    > [if !supportsExperimentGroups] **Experiment groups**: no live streaming; results appear in Studio after each run
+   > [if !supportsDatasetId] **Dataset attribution**: the experiment won't be durably linked to its dataset (still findable via the trace-lineage fallback; fixed by regenerating the script / upgrading the SDK)
    > [if !supportsReplayTraceIds] **Replay trace IDs**: experiment results can't be persisted or compared across iterations (your SDK needs an upgrade)
    >
    > [if !supportsInputAdapters] **Input adapters**: replay can't recover traces when the function's signature drifts after capture (fixed by upgrading the SDK)"
@@ -666,10 +673,11 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    **2. Regenerate the replay script.** Locate the replay script for this trace function (found in `detect-replay-capabilities`). Fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript#replay` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk#replay`). Then edit the script to add the missing flags:
    - **`--code-change <path>`**: parse the JSON file, pass `codeChangeDescription` and `codeChangeFiles` to `replay()`
    - **`--experiment-group-id <uuid>`**: pass `experimentGroupId` to `replay()`
+   - **`--dataset-id <uuid>`**: pass `datasetId` to `replay()`. This is the **preferred way to replay a dataset**: passed alone (no `--trace-ids`) the server replays exactly the dataset's traces and durably attributes the experiment to the dataset. Adding this flag is what lets the replay step drop the hand-enumerated `--trace-ids` list.
    - **Replay Output Contract**: emit the full `ReplayResult` as one `JSON.stringify(result, null, 2)` block to stdout (including every item's `traceId`, `durationMs`, `tokens`, `model`). Human-readable summary goes to stderr.
    Do NOT invoke `$bitfab:setup replay` as a separate skill; edit the script inline here.
 
-   **3. Re-check capabilities.** After editing, re-check against the **installed SDK dist** (not just the script): grep the replay JS for `experimentGroupId` / `codeChangeDescription`, grep the SDK `.d.ts` for `ReplayItem.traceId` (the authoritative replay-trace-ID signal), and grep the SDK for `adaptInputs` / `adapt_inputs` (the input-adapter hook). Update the flags in working context. If any are still missing after both upgrades, note it but continue.
+   **3. Re-check capabilities.** After editing, re-check against the **installed SDK dist** (not just the script): grep the replay JS for `experimentGroupId` / `codeChangeDescription`, grep the SDK `.d.ts` for `ReplayItem.traceId` (the authoritative replay-trace-ID signal), and grep the SDK for `adaptInputs` / `adapt_inputs` (the input-adapter hook), and grep the SDK for `datasetId` / `dataset_id` (durable dataset attribution). Update the flags in working context. If any are still missing after both upgrades, note it but continue.
 5. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Generate the experiment group ID and open the experiments page before making changes or running replay.** This lets the user watch results stream in live from the moment replay starts.
@@ -735,14 +743,16 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    **Check the `supportsExperimentGroups` flag** (from `detect-replay-capabilities`). If true, pass `--experiment-group-id <experimentGroupId>` (from `open-experiments-before-replay`) so the test run is tagged with the group. If false, skip the flag.
 
-   Run the replay with the trace IDs and whichever flags are supported (omit unsupported flags):
+   **Check the `supportsDatasetId` flag** (from `detect-replay-capabilities`). When true, this is the **preferred way to replay the dataset**: pass `--dataset-id <datasetId>` (the dataset id held in working context since `pick-dataset`) and **omit `--trace-ids` entirely**. The server replays exactly the dataset's traces and durably attributes the experiment to the dataset, so it shows under the dataset's experiments even when trace lineage can't be reconstructed, and you don't have to enumerate the dataset's trace IDs by hand. Only when `supportsDatasetId` is false do you fall back to `--trace-ids <the dataset's resolved trace ids>` (attribution then relies on the derived trace-lineage join). If the script lacks `--dataset-id`, prefer upgrading it (see `upgrade-replay-script`) over the trace-ids fallback.
+
+   Run the replay with whichever flags are supported (omit unsupported flags):
 
    ```bash
    # The exact command depends on the replay script, adapt to what exists
-   # Example for TypeScript (with all flags):
+   # Preferred (supportsDatasetId true): --dataset-id alone replays the dataset; no --trace-ids needed
+   cd <project-dir> && npx tsx scripts/replay.ts <pipeline-name> --dataset-id <datasetId> --code-change /tmp/bitfab-code-change-<experimentN>.json --experiment-group-id <experimentGroupId>
+   # Fallback (older script/SDK without dataset-id support): pass the dataset's resolved trace IDs
    cd <project-dir> && npx tsx scripts/replay.ts <pipeline-name> --trace-ids <id1>,<id2>,<id3>,... --code-change /tmp/bitfab-code-change-<experimentN>.json --experiment-group-id <experimentGroupId>
-   # Without experiment-group-id support (older scripts):
-   cd <project-dir> && npx tsx scripts/replay.ts <pipeline-name> --trace-ids <id1>,<id2>,<id3>,... --code-change /tmp/bitfab-code-change-<experimentN>.json
    ```
 
    **Before running: verify the replay script prints the full original and new output values AND the replay trace ID (`item.traceId`) to stdout for every item** (not just lengths, counts, hashes, or truncated previews). If it doesn't, fix the script first, the Replay Output Contract and example script live in the SDK reference at `https://docs.bitfab.ai/<language>-sdk#replay`. Subagents can't evaluate an improvement from `5 → 7 (+2)`, and missing trace IDs block verdict persistence.
