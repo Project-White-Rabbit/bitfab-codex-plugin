@@ -881,7 +881,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    **Persist via `persistReplayLabels.js`.** Write the verdicts to a tmp JSON file then run the script, one Bash call, one batched MCP call server-side, file is auto-deleted on success:
 
-   1. Pick a tmp path. Recommended: `.bitfab/tmp/verdicts-<testRunId>.json` (create the dir if missing). Falls back to `os.tmpdir()` if the project root isn't writable.
+   1. Pick an **absolute** tmp path. The script reads the file relative to its own process cwd, which in parallel-worktree mode is NOT the project root, so a relative path can resolve to a different directory than where you wrote the file (`ENOENT`). Recommended: `<repoRoot>/.bitfab/tmp/verdicts-<testRunId>.json` where `<repoRoot>` is the output of `git rev-parse --show-toplevel` (create the dir if missing). Falls back to an absolute path under `os.tmpdir()` if the project root isn't writable.
    2. Use the `Write` tool to write JSON of this exact shape:
 
    ```json
@@ -900,7 +900,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    3. Run the script:
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/persistReplayLabels.js" .bitfab/tmp/verdicts-<testRunId>.json
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/persistReplayLabels.js" <repoRoot>/.bitfab/tmp/verdicts-<testRunId>.json
    ```
 
    4. Read its single JSON line on stdout. Hold the parsed result for the next step.
