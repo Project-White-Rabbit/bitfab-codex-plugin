@@ -1,0 +1,11 @@
+import { runSessionLogConsent } from "bitfab-plugin-lib"
+
+try {
+  runSessionLogConsent(process.argv.slice(2))
+} catch (err) {
+  console.error(
+    "Session log consent failed:",
+    err instanceof Error ? err.message : String(err),
+  )
+  process.exit(1)
+}
