@@ -10,6 +10,12 @@ description: "Set up and maintain Bitfab tracing for AI features. TRIGGER when: 
 - Present 2-5 concrete options
 - One decision per question, never batch
 
+**Execution style (applies to every phase).** Default to terse, action-first turns:
+- During mechanical phases (detecting language, searching code, reading files), run the tools and report only what you found. Do not narrate each command or pre-announce what you are about to do.
+- Batch read-only probing: combine related shell checks into one command (separate them with `;`, not `&&` (a no-match `grep` exits non-zero and would abort an `&&` chain, skipping later probes)), and read multiple files in a single batch rather than one file per turn. Adaptive follow-up greps that depend on a prior result are expected and fine; the goal is to collapse only the fixed, independent probes.
+- Keep prose between tool calls to one line or none. Save fuller explanation for decision points and the workflow summaries the user acts on.
+- Surfacing a risk, ambiguity, or unexpected finding is never the narration to suppress: raise it immediately, even mid-probe (e.g. unserializable inputs, a shim with lazy init, an ambiguous project root).
+
 **Studio gate recovery (applies to every Studio-opening command).** Any command that opens or navigates Studio (`openTracePlan.js`, `startTemplatePreview.js`, etc.) emits `{"event":"not-responding","sessionId":"..."}` and exits non-zero when a Studio session is recorded but its window can't be reached (a crash, sleep, or a close no process witnessed). It will NOT open a duplicate window. **This is a gate, not a failure to retry blindly.** Recommend the user refresh or reopen the Studio tab, then ask the user with two options: **Try again** (re-run the same command, the record is still on disk, so a window that came back gets reused) or **Open a new Studio** (run `node "${BITFAB_PLUGIN_DIR}/dist/commands/clearStudioSession.js"` to drop the stale pointer, then re-run the command, which now opens a fresh window). Only clear the pointer after the user approves.
 
 **🚨 Blocking-process rule (applies to any plugin command described as "blocks until the user does X"):** When you launch a plugin CLI that blocks on a Studio interaction (`login.js`, `startDataset.js`, `openTracePlan.js`, etc.), you MUST keep the exec session alive and keep polling it until the process exits on its own.
@@ -230,6 +236,8 @@ Opt in or out of session log collection. Does not require authentication.
 Instrument the codebase with Bitfab tracing. Requires authentication (run Login first if needed).
 
 Bitfab captures every AI function call, inputs, outputs, and errors, so you can see exactly what your AI is doing and discover what's going wrong. The goal is to have enough context in each trace to tell whether a call succeeded or failed, and why.
+
+**Detection and search below are mechanical: run the probes and report what you found, without narrating each command. Combine related read-only checks into one command (separate them with `;`, not `&&`, since a no-match `grep` exits non-zero and would abort an `&&` chain) and read multiple files in a single batch; adaptive follow-up greps that depend on a prior result are expected. A risk, ambiguity, or unexpected finding (unserializable inputs, a shim with lazy init, an ambiguous root) is never the narration to suppress: raise it immediately, even mid-probe.**
 
 1. **Detect the project language** (TypeScript, Python, Ruby, or Go). In a monorepo, identify which directories are **applications** (services, APIs, agents) vs **libraries** (SDKs, shared packages). Focus on application directories. Also scan imports and package manifests for supported framework signals, and note which framework each application directory uses, step 5 fetches the matching framework page alongside the language reference:
    - **LangGraph / LangChain**: TS: `@langchain/langgraph`, `@langchain/core`; Python: `langgraph`, `langchain`, `langchain_core`
