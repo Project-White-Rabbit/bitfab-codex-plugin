@@ -88,6 +88,7 @@ In sub-modes that take a function key, grep the codebase for `<key>` early so la
 | `status.js` | Check plugin authentication and connection status |
 | `openStudioTo.js <path>` | Navigate an existing Studio session or open a new one at the given path |
 | `pushActivity.js {action} "{displayName}"` | Emit activity events to the Studio sidebar |
+| `detectCapabilities.js` | Detect the installed SDK's replay capabilities and version-update status, emitted as a <bitfab-replay-capabilities> JSON block |
 | `persistReplayLabels.js <verdicts-file>` | Persist replay verdicts from a JSON file to Bitfab via MCP |
 | `closeStudio.js [message]` | Close the active Studio session (tab + background event process); no-op when nothing is open |
 | `clearStudioSession.js` | Clear the stale active-Studio pointer so the next open starts fresh |
@@ -241,25 +242,30 @@ Check that this trace function has both instrumentation and a replay script.
 
    **1. Use the replay script located in the previous step** (or grep for `scripts/replay.*` / files importing `bitfab.replay` / `client.replay`).
 
-   **2. Grep the replay script for these capabilities:**
+   **2. Grep the replay script for the flags it forwards:**
 
-   | Grep for | Flag | What it enables |
+   | Grep the script for | Flag | What it enables |
    |----------|------|-----------------|
    | `code-change` or `code_change` | `supportsCodeChanges` | Code diffs attached to each experiment in the dashboard |
    | `experiment-group-id` or `experiment_group_id` | `supportsExperimentGroups` | Live streaming of results in Studio as replay runs |
    | `dataset-id` or `dataset_id` | `supportsDatasetId` | Durable attribution of the experiment to its dataset (shows under the dataset's experiments) |
-   | `traceId` or `trace_id` in the output/print section | `supportsReplayTraceIds` (verified against the SDK `.d.ts` in step 3, re-confirmed post-replay) | Verdict persistence, cross-iteration comparison, Studio experiments page |
+   | `traceId` or `trace_id` in the output/print section | `supportsReplayTraceIds` (re-confirmed post-replay in `check-trace-id-support`) | Verdict persistence, cross-iteration comparison, Studio experiments page |
 
-   `supportsInputAdapters` is **not** a script-grep flag (the script gains an `adaptInputs` / `adapt_inputs` argument only after a signature actually drifts, in `adapt-replay-inputs`). It is determined SOLELY by the installed SDK in step 3 below.
+   `supportsInputAdapters` is **not** a script-grep flag (the script gains an `adaptInputs` / `adapt_inputs` argument only after a signature actually drifts, in `adapt-replay-inputs`). It comes solely from the installed SDK in step 3.
 
-   **3. Verify the installed SDK actually supports the detected flags.** The replay script may accept flags that the installed SDK silently ignores. Check the actual SDK dist (not the script) for each capability:
-   - For `supportsExperimentGroups`: grep the installed SDK's replay JS file (e.g. `node_modules/.pnpm/@bitfab+sdk@*/node_modules/@bitfab/sdk/dist/replay-*.js`) for `experimentGroupId`. If absent, the SDK drops the option silently.
-   - For `supportsDatasetId`: grep the same file for `datasetId` (TS) or `dataset_id` (the installed `bitfab/replay.py` / gem `replay.rb`). If absent, the SDK predates dataset attribution; mark `supportsDatasetId` **false** (the server still derives the link from trace lineage, so this only loses the durable column).
-   - For `supportsCodeChanges`: grep the same file for `codeChangeDescription` or `code_change_description`.
-   - For `supportsReplayTraceIds`: grep the installed SDK's **type declaration** for a `traceId` field on the `ReplayItem` interface, `grep -A3 "interface ReplayItem" node_modules/.pnpm/@bitfab+sdk@*/node_modules/@bitfab/sdk/dist/index.d.ts` (or `node_modules/@bitfab/sdk/dist/index.d.ts`). If `ReplayItem.traceId` is **absent**, the installed SDK does not surface replay trace IDs (the per-item mapping was added in a later release, e.g. 0.13.4 lacks it, 0.13.6 has it), mark `supportsReplayTraceIds` **false**. This is a definitive **pre-replay** signal; the later `check-trace-id-support` step still re-confirms from the actual replay output.
-   - For `supportsInputAdapters`: grep the installed SDK for the `replay()` option: `grep "adaptInputs" node_modules/.pnpm/@bitfab+sdk@*/node_modules/@bitfab/sdk/dist/index.d.ts` (TS), or `adapt_inputs` in the installed `bitfab/replay.py` (Python) / the installed gem's `replay.rb` (Ruby). If absent, the SDK predates the input-adapter hook; mark `supportsInputAdapters` **false**. The replay script needs no pre-wiring for this: an adapter (its own file + an import) is added only when a signature actually drifts, in the `adapt-replay-inputs` step (Phase 5).
+   **3. Confirm the installed SDK supports each flag.** A flag the script forwards is silently ignored when the installed SDK predates it, so each flag is gated on the SDK too. Run the capability probe (it resolves the installed SDK version from the lockfile/manifest and gates every capability by version, with no dist-file grepping across package-manager layouts):
 
-   If the replay script has a flag but the installed SDK does not support it, mark that flag as **false**. Prioritize upgrading the SDK over using fallbacks, without replay trace IDs, verdict labels can't be persisted (benchmark/experiment results stay in-agent only).
+   ```bash
+   cd <project-dir> && node "${BITFAB_PLUGIN_DIR}/dist/commands/detectCapabilities.js"
+   ```
+
+   Read the `<bitfab-replay-capabilities>` block. Each line is a JSON object for one detected SDK with `language`, `workspacePath`, `current` (resolved version), `versionResolved`, `updateAvailable`, `latest`, and a `capabilities` object holding `supportsExperimentGroups`, `supportsDatasetId`, `supportsCodeChanges`, `supportsReplayTraceIds`, `supportsInputAdapters`. Pick the line whose `language` (and `workspacePath`, in a monorepo) matches the replay script's project.
+
+   - **Combine the two sources:** a flag is true only when the script forwards it (step 2) **and** that SDK's matching `capabilities.*` is true. Take `supportsInputAdapters` straight from `capabilities.supportsInputAdapters` (it has no script side).
+   - `supportsReplayTraceIds` from the probe is a definitive **pre-replay** signal; the later `check-trace-id-support` step still re-confirms from the actual replay output.
+   - If `versionResolved` is `false`, the probe couldn't pin the installed version, so every capability defaulted false and is **unverified**. Check that one SDK by hand before relying on the flags (TypeScript: grep `node_modules/@bitfab/sdk/dist/index.d.ts` for the option names and `ReplayItem.traceId`; Python: the installed `bitfab/replay.py`; Ruby: the installed gem's `replay.rb`), or resolve the version and re-run.
+
+   If the script has a flag but the SDK's `capabilities.*` is false, mark that flag **false**. Prioritize upgrading the SDK over using fallbacks: without replay trace IDs, verdict labels can't be persisted (benchmark/experiment results stay in-agent only).
 
    **4. Route on the result.**
 
@@ -280,12 +286,18 @@ Check that this trace function has both instrumentation and a replay script.
    > B) **Continue without**: run experiments with the current script; missing features are skipped → step 4 of the Phase 5: Iterate with Replay phase (mode `experiment`); step 5 of the Phase 5: Iterate with Replay phase (mode `benchmark`); stop (mode `add-trace`); step 1 of the Cleanup phase (mode `replay`); otherwise step 1 of the Phase 3: Pick a Dataset and Label Traces phase
 4. **Upgrade the SDK and replay script.** The replay script references SDK APIs (`experimentGroupId`, `codeChangeDescription`, per-item `traceId`, `adaptInputs` / `adapt_inputs`) that require a recent SDK. Upgrade the SDK first, then regenerate the script.
 
-   **1. Upgrade the SDK.** Read the resolved version from the lockfile (`pnpm-lock.yaml`, `poetry.lock`, `uv.lock`, `Gemfile.lock`) and compare against the latest. If outdated, run the package manager's update command:
-   - TypeScript: `pnpm update @bitfab/sdk` (in monorepos, scope with `--filter <pkg>`). **If `package.json` pins an exact version (e.g. `"@bitfab/sdk": "0.13.4"` with no `^`/`~`), `pnpm update` will NOT move past the pin, bump the spec in `package.json` to the target version first (e.g. `"@bitfab/sdk": "0.13.6"`), then `pnpm install`.**
+   **1. Upgrade the SDK.** Run the capability probe to read the installed version and update status (skip if you still have its block from `detect-replay-capabilities`):
+
+   ```bash
+   cd <project-dir> && node "${BITFAB_PLUGIN_DIR}/dist/commands/detectCapabilities.js"
+   ```
+
+   For the SDK matching this project, the `<bitfab-replay-capabilities>` block reports `current` (resolved version), `latest`, `updateAvailable`, and `renameFrom`. If `updateAvailable` is false, the SDK is already current, skip to step 2. Otherwise run the package manager's update command:
+   - TypeScript: `pnpm update @bitfab/sdk` (in monorepos, scope with `--filter <pkg>`). **If `package.json` pins an exact version (e.g. `"@bitfab/sdk": "0.13.4"` with no `^`/`~`), `pnpm update` will NOT move past the pin, bump the spec in `package.json` to the reported `latest` first (e.g. `"@bitfab/sdk": "0.13.6"`), then `pnpm install`.**
    - Python: `uv lock --upgrade-package bitfab-py && uv sync` or `poetry update bitfab-py`
    - Ruby: `bundle update bitfab --conservative`
 
-   If the SDK is on a legacy package name (e.g. `bitfab` instead of `@bitfab/sdk`), remove the old package and install the new one. Skip this step if the SDK is already at the latest version.
+   If `renameFrom` is set (the SDK is on the legacy `bitfab` package instead of `@bitfab/sdk`), remove the old package and install `@bitfab/sdk`.
 
    **2. Regenerate the replay script.** Locate the replay script for this trace function (found in `detect-replay-capabilities`). Fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript.md` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk.md`). Then edit the script to add the missing flags:
    - **`--code-change <path>`**: parse the JSON file, pass `codeChangeDescription` and `codeChangeFiles` to `replay()`
@@ -294,7 +306,7 @@ Check that this trace function has both instrumentation and a replay script.
    - **Replay Output Contract**: emit the full `ReplayResult` as one `JSON.stringify(result, null, 2)` block to stdout (including every item's `traceId`, `durationMs`, `tokens`, `model`). Human-readable summary goes to stderr.
    Do NOT invoke `$bitfab:setup replay` as a separate skill; edit the script inline here.
 
-   **3. Re-check capabilities.** After editing, re-check against the **installed SDK dist** (not just the script): grep the replay JS for `experimentGroupId` / `codeChangeDescription`, grep the SDK `.d.ts` for `ReplayItem.traceId` (the authoritative replay-trace-ID signal), and grep the SDK for `adaptInputs` / `adapt_inputs` (the input-adapter hook), and grep the SDK for `datasetId` / `dataset_id` (durable dataset attribution). Update the flags in working context. If any are still missing after both upgrades, note it but continue.
+   **3. Re-check capabilities.** After upgrading and editing, re-run `node "${BITFAB_PLUGIN_DIR}/dist/commands/detectCapabilities.js"` and re-read the `capabilities` object for this SDK (the probe now sees the upgraded version). Combine again with the script-side grep from step 2 and update the flags in working context. If any are still missing after the upgrade, note it but continue.
 
 ## Phase Investigate: Free-form Investigation
 
@@ -638,25 +650,30 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
 
    **1. Locate the replay script** (you found it in Phase 2 in `wizard` mode, or grep for `scripts/replay.*` / files importing `bitfab.replay` / `client.replay` now).
 
-   **2. Grep the replay script for these capabilities:**
+   **2. Grep the replay script for the flags it forwards:**
 
-   | Grep for | Flag | What it enables |
+   | Grep the script for | Flag | What it enables |
    |----------|------|-----------------|
    | `code-change` or `code_change` | `supportsCodeChanges` | Code diffs attached to each experiment in the dashboard |
    | `experiment-group-id` or `experiment_group_id` | `supportsExperimentGroups` | Live streaming of results in Studio as replay runs |
    | `dataset-id` or `dataset_id` | `supportsDatasetId` | Durable attribution of the experiment to its dataset (shows under the dataset's experiments) |
-   | `traceId` or `trace_id` in the output/print section | `supportsReplayTraceIds` (verified against the SDK `.d.ts` in step 3, re-confirmed post-replay) | Verdict persistence, cross-iteration comparison, Studio experiments page |
+   | `traceId` or `trace_id` in the output/print section | `supportsReplayTraceIds` (re-confirmed post-replay in `check-trace-id-support`) | Verdict persistence, cross-iteration comparison, Studio experiments page |
 
-   `supportsInputAdapters` is **not** a script-grep flag (the script gains an `adaptInputs` / `adapt_inputs` argument only after a signature actually drifts, in `adapt-replay-inputs`). It is determined SOLELY by the installed SDK in step 3 below.
+   `supportsInputAdapters` is **not** a script-grep flag (the script gains an `adaptInputs` / `adapt_inputs` argument only after a signature actually drifts, in `adapt-replay-inputs`). It comes solely from the installed SDK in step 3.
 
-   **3. Verify the installed SDK actually supports the detected flags.** The replay script may accept flags that the installed SDK silently ignores. Check the actual SDK dist (not the script) for each capability:
-   - For `supportsExperimentGroups`: grep the installed SDK's replay JS file (e.g. `node_modules/.pnpm/@bitfab+sdk@*/node_modules/@bitfab/sdk/dist/replay-*.js`) for `experimentGroupId`. If absent, the SDK drops the option silently.
-   - For `supportsDatasetId`: grep the same file for `datasetId` (TS) or `dataset_id` (the installed `bitfab/replay.py` / gem `replay.rb`). If absent, the SDK predates dataset attribution; mark `supportsDatasetId` **false** (the server still derives the link from trace lineage, so this only loses the durable column).
-   - For `supportsCodeChanges`: grep the same file for `codeChangeDescription` or `code_change_description`.
-   - For `supportsReplayTraceIds`: grep the installed SDK's **type declaration** for a `traceId` field on the `ReplayItem` interface, `grep -A3 "interface ReplayItem" node_modules/.pnpm/@bitfab+sdk@*/node_modules/@bitfab/sdk/dist/index.d.ts` (or `node_modules/@bitfab/sdk/dist/index.d.ts`). If `ReplayItem.traceId` is **absent**, the installed SDK does not surface replay trace IDs (the per-item mapping was added in a later release, e.g. 0.13.4 lacks it, 0.13.6 has it), mark `supportsReplayTraceIds` **false**. This is a definitive **pre-replay** signal; the later `check-trace-id-support` step still re-confirms from the actual replay output.
-   - For `supportsInputAdapters`: grep the installed SDK for the `replay()` option: `grep "adaptInputs" node_modules/.pnpm/@bitfab+sdk@*/node_modules/@bitfab/sdk/dist/index.d.ts` (TS), or `adapt_inputs` in the installed `bitfab/replay.py` (Python) / the installed gem's `replay.rb` (Ruby). If absent, the SDK predates the input-adapter hook; mark `supportsInputAdapters` **false**. The replay script needs no pre-wiring for this: an adapter (its own file + an import) is added only when a signature actually drifts, in the `adapt-replay-inputs` step (Phase 5).
+   **3. Confirm the installed SDK supports each flag.** A flag the script forwards is silently ignored when the installed SDK predates it, so each flag is gated on the SDK too. Run the capability probe (it resolves the installed SDK version from the lockfile/manifest and gates every capability by version, with no dist-file grepping across package-manager layouts):
 
-   If the replay script has a flag but the installed SDK does not support it, mark that flag as **false**. Prioritize upgrading the SDK over using fallbacks, without replay trace IDs, verdict labels can't be persisted (benchmark/experiment results stay in-agent only).
+   ```bash
+   cd <project-dir> && node "${BITFAB_PLUGIN_DIR}/dist/commands/detectCapabilities.js"
+   ```
+
+   Read the `<bitfab-replay-capabilities>` block. Each line is a JSON object for one detected SDK with `language`, `workspacePath`, `current` (resolved version), `versionResolved`, `updateAvailable`, `latest`, and a `capabilities` object holding `supportsExperimentGroups`, `supportsDatasetId`, `supportsCodeChanges`, `supportsReplayTraceIds`, `supportsInputAdapters`. Pick the line whose `language` (and `workspacePath`, in a monorepo) matches the replay script's project.
+
+   - **Combine the two sources:** a flag is true only when the script forwards it (step 2) **and** that SDK's matching `capabilities.*` is true. Take `supportsInputAdapters` straight from `capabilities.supportsInputAdapters` (it has no script side).
+   - `supportsReplayTraceIds` from the probe is a definitive **pre-replay** signal; the later `check-trace-id-support` step still re-confirms from the actual replay output.
+   - If `versionResolved` is `false`, the probe couldn't pin the installed version, so every capability defaulted false and is **unverified**. Check that one SDK by hand before relying on the flags (TypeScript: grep `node_modules/@bitfab/sdk/dist/index.d.ts` for the option names and `ReplayItem.traceId`; Python: the installed `bitfab/replay.py`; Ruby: the installed gem's `replay.rb`), or resolve the version and re-run.
+
+   If the script has a flag but the SDK's `capabilities.*` is false, mark that flag **false**. Prioritize upgrading the SDK over using fallbacks: without replay trace IDs, verdict labels can't be persisted (benchmark/experiment results stay in-agent only).
 
    **4. Route on the result.**
 
@@ -679,12 +696,18 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
 
    **Upgrade the SDK and replay script.** The replay script references SDK APIs (`experimentGroupId`, `codeChangeDescription`, per-item `traceId`, `adaptInputs` / `adapt_inputs`) that require a recent SDK. Upgrade the SDK first, then regenerate the script.
 
-   **1. Upgrade the SDK.** Read the resolved version from the lockfile (`pnpm-lock.yaml`, `poetry.lock`, `uv.lock`, `Gemfile.lock`) and compare against the latest. If outdated, run the package manager's update command:
-   - TypeScript: `pnpm update @bitfab/sdk` (in monorepos, scope with `--filter <pkg>`). **If `package.json` pins an exact version (e.g. `"@bitfab/sdk": "0.13.4"` with no `^`/`~`), `pnpm update` will NOT move past the pin, bump the spec in `package.json` to the target version first (e.g. `"@bitfab/sdk": "0.13.6"`), then `pnpm install`.**
+   **1. Upgrade the SDK.** Run the capability probe to read the installed version and update status (skip if you still have its block from `detect-replay-capabilities`):
+
+   ```bash
+   cd <project-dir> && node "${BITFAB_PLUGIN_DIR}/dist/commands/detectCapabilities.js"
+   ```
+
+   For the SDK matching this project, the `<bitfab-replay-capabilities>` block reports `current` (resolved version), `latest`, `updateAvailable`, and `renameFrom`. If `updateAvailable` is false, the SDK is already current, skip to step 2. Otherwise run the package manager's update command:
+   - TypeScript: `pnpm update @bitfab/sdk` (in monorepos, scope with `--filter <pkg>`). **If `package.json` pins an exact version (e.g. `"@bitfab/sdk": "0.13.4"` with no `^`/`~`), `pnpm update` will NOT move past the pin, bump the spec in `package.json` to the reported `latest` first (e.g. `"@bitfab/sdk": "0.13.6"`), then `pnpm install`.**
    - Python: `uv lock --upgrade-package bitfab-py && uv sync` or `poetry update bitfab-py`
    - Ruby: `bundle update bitfab --conservative`
 
-   If the SDK is on a legacy package name (e.g. `bitfab` instead of `@bitfab/sdk`), remove the old package and install the new one. Skip this step if the SDK is already at the latest version.
+   If `renameFrom` is set (the SDK is on the legacy `bitfab` package instead of `@bitfab/sdk`), remove the old package and install `@bitfab/sdk`.
 
    **2. Regenerate the replay script.** Locate the replay script for this trace function (found in `detect-replay-capabilities`). Fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript.md` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk.md`). Then edit the script to add the missing flags:
    - **`--code-change <path>`**: parse the JSON file, pass `codeChangeDescription` and `codeChangeFiles` to `replay()`
@@ -693,7 +716,7 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
    - **Replay Output Contract**: emit the full `ReplayResult` as one `JSON.stringify(result, null, 2)` block to stdout (including every item's `traceId`, `durationMs`, `tokens`, `model`). Human-readable summary goes to stderr.
    Do NOT invoke `$bitfab:setup replay` as a separate skill; edit the script inline here.
 
-   **3. Re-check capabilities.** After editing, re-check against the **installed SDK dist** (not just the script): grep the replay JS for `experimentGroupId` / `codeChangeDescription`, grep the SDK `.d.ts` for `ReplayItem.traceId` (the authoritative replay-trace-ID signal), and grep the SDK for `adaptInputs` / `adapt_inputs` (the input-adapter hook), and grep the SDK for `datasetId` / `dataset_id` (durable dataset attribution). Update the flags in working context. If any are still missing after both upgrades, note it but continue.
+   **3. Re-check capabilities.** After upgrading and editing, re-run `node "${BITFAB_PLUGIN_DIR}/dist/commands/detectCapabilities.js"` and re-read the `capabilities` object for this SDK (the probe now sees the upgraded version). Combine again with the script-side grep from step 2 and update the flags in working context. If any are still missing after the upgrade, note it but continue.
 3. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Generate the experiment group ID and open the experiments page before making changes or running replay.** This lets the user watch results stream in live from the moment replay starts.
@@ -971,7 +994,7 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
    - **If pass rate improved and no regressions**: ask the user to confirm whether they want to keep iterating or stop
    - **If pass rate improved but regressions exist or no improvement**: tell the user and propose to create a plan for new experiments and continue iterating.
 
-   **If running in text-only mode** (trace IDs were unavailable): append a note that cross-iteration comparison isn't available without trace IDs. Each iteration's results are visible only in-agent for the current run. Upgrading to `@bitfab/sdk` 0.13.6+ and updating the server unlocks persistent experiment tracking across iterations, side-by-side comparison in Studio, and the full experiments page.
+   **If running in text-only mode** (trace IDs were unavailable): append a note that cross-iteration comparison isn't available without trace IDs. Each iteration's results are visible only in-agent for the current run. Upgrading to `@bitfab/sdk` 0.13.5+ and updating the server unlocks persistent experiment tracking across iterations, side-by-side comparison in Studio, and the full experiments page.
 
    Ensure your question includes your recommended next step.
 
@@ -1081,7 +1104,7 @@ Reached only from `replay` mode. The user already has a trace ID and (usually) a
 
    Use ✅ for pass-verdict rows (fixed, still-passing), ❌ for fail-verdict rows (regression, still-failing), ⚠️ for unreplayable, and ⏭️ for skipped (an item you explicitly marked `skip: true` in `evaluate-results` because the output was genuinely ambiguous). Keep `Detail` to one short line per row (truncate long annotations/outputs). Keep **both `unreplayable` and `skipped` out of the pass-rate denominator.** Define the counts explicitly: `T` = total traces in the dataset; `U` = unreplayable; `S` = skipped; `scorable` = `T − U − S` (the items that got a real pass/fail verdict); `X` = the count that passed (✅ fixed + ✅ still-passing). `Pass rate` = `X / scorable` (so the summary table's "X/scorable" uses these exact numbers). **If `scorable` is 0** (every trace was unreplayable or skipped, so nothing got a real verdict), report `Pass rate` as `N/A (0 scorable)` instead of `0/0`, and add a line that no trace could be scored this run. If `U > 0`, add one line under the tables naming the cause (missing DB rows, FK violation, env mismatch). Omit the `Skipped` summary row and any skipped table rows entirely when `S` is 0.
 
-   **If running in text-only mode** (trace IDs were unavailable): append a one-line note under the tables that persistent results require upgrading to `@bitfab/sdk` 0.13.6+.
+   **If running in text-only mode** (trace IDs were unavailable): append a one-line note under the tables that persistent results require upgrading to `@bitfab/sdk` 0.13.5+.
 
    **When `costRun` is set, add token cost to both tables.** In Table 1, add `Input tokens | base → new (±X%)` and `Output tokens | base → new (±Y%)` rows (total tokens only if the replay output does not split them). In Table 2, add a `Tokens` column showing each trace's `original → replay` total and % change. For a cost benchmark the headline is the token delta, not the pass rate alone: report both. Baseline tokens come from each original trace's recorded usage. For originals that errored, failed, or recorded no usage, apply the same cheapest-first recovery as the evaluate step (reuse a clean recorded run, else a one-off per-item backfill replay of the unchanged code), never a dataset-wide baseline arm; new tokens come from the replay output. Where no baseline could be recovered, show the cell as "no baseline" rather than a fabricated delta. Use the run's basis (`costBasis`), matching the page lens: on `uncached`, the Input row and the Tokens column are the uncached figures (`(input - cached) + output`, `input - cached` for the input row) and the table labels the row/column "uncached"; on `all`, raw `input + output`. Don't mix bases within a scorecard.
 
