@@ -140,7 +140,7 @@ The gate fires only when a recorded window went unreachable with **no close sign
 
 **Never use Playwright, `open`, `chrome-testing`, or any other browser automation to open Studio pages.** Always use `openStudioTo.js` which handles auth and session management.
 
-1. **In `benchmark` mode, first check the Studio opt-in flag** (set during argument routing when the `studio` keyword was passed). If benchmark did NOT opt in, skip this entire step without running any command and continue to `phase-5/pick-dataset`. In all other modes, and in `benchmark` with the `studio` flag, proceed.
+1. **In `benchmark` mode, first check the Studio opt-in flag** (set during argument routing when the `studio` keyword was passed). If benchmark did NOT opt in, skip this entire step without running any command and continue to the `pick-dataset` step (Phase 5 Setup). In all other modes, and in `benchmark` with the `studio` flag, proceed.
 
    Open Studio at the initial path for this mode. `openStudioTo.js` is the single entry point for all Studio operations: it navigates an existing session or opens a new one automatically.
 
@@ -158,7 +158,7 @@ The gate fires only when a recorded window went unreachable with **no close sign
    - **`dataset <key>` mode:** pass `/studio` (Phase 3's "Open the dataset review page" step navigates to the chosen dataset's own page once the datasetId is held; there is no function-level dataset page)
    - **`experiment <key>` mode:** pass `/studio`
    - **`investigate [<key>]` mode:** pass `/studio`
-   - **`benchmark <key>` mode:** only when the run opted in with the `studio` keyword (the working-context flag from argument routing): pass `/studio`. Without the flag, benchmark is terminal-only: do NOT run `openStudioTo.js` at all, skip straight to `phase-5/pick-dataset` (the step's `next` already routes there)
+   - **`benchmark <key>` mode:** only when the run opted in with the `studio` keyword (the working-context flag from argument routing): pass `/studio`. Without the flag, benchmark is terminal-only: do NOT run `openStudioTo.js` at all, skip straight to the `pick-dataset` step (the step's `next` already routes there)
 
    `replay` mode never reaches this step (it runs entirely in-chat with no Studio session), see Phase Replay.
 
@@ -277,7 +277,7 @@ Check that this trace function has both instrumentation and a replay script.
    > [if !supportsInputAdapters] **Input adapters**: replay can't recover traces when the function's signature drifts after capture (fixed by upgrading the SDK)"
 
    > A) **Upgrade the replay script**: regenerate the script with full support, then continue *(recommended)* → step 4
-   > B) **Continue without**: run experiments with the current script; missing features are skipped → step 6 of the Phase 5: Iterate with Replay phase (mode `experiment`); step 7 of the Phase 5: Iterate with Replay phase (mode `benchmark`); stop (mode `add-trace`); step 1 of the Cleanup phase (mode `replay`); otherwise step 1 of the Phase 3: Pick a Dataset and Label Traces phase
+   > B) **Continue without**: run experiments with the current script; missing features are skipped → step 4 of the Phase 5: Iterate with Replay phase (mode `experiment`); step 5 of the Phase 5: Iterate with Replay phase (mode `benchmark`); stop (mode `add-trace`); step 1 of the Cleanup phase (mode `replay`); otherwise step 1 of the Phase 3: Pick a Dataset and Label Traces phase
 4. **Upgrade the SDK and replay script.** The replay script references SDK APIs (`experimentGroupId`, `codeChangeDescription`, per-item `traceId`, `adaptInputs` / `adapt_inputs`) that require a recent SDK. Upgrade the SDK first, then regenerate the script.
 
    **1. Upgrade the SDK.** Read the resolved version from the lockfile (`pnpm-lock.yaml`, `poetry.lock`, `uv.lock`, `Gemfile.lock`) and compare against the latest. If outdated, run the package manager's update command:
@@ -596,11 +596,9 @@ In `dataset` mode this phase is the entry point, Phase 1 (function picker) and P
 
    Get the user's confirmation before proceeding.
 
-## Phase 5: Iterate with Replay
+## Phase 5 Setup: Pick Dataset & Execution Mode
 
-In `experiment` mode this is an iterative improvement loop (each iteration makes a change and replays). In `benchmark` mode it is a single replay of the current code followed by a terminal scorecard, no changes, no iteration.
-
-`openStudioTo.js` resolves the active session automatically. `benchmark` mode opens Studio only when the run opted in with the `studio` keyword; without it, benchmark opens no Studio and runs terminal-only.
+Entry for `experiment` and `benchmark` modes, which skip the function picker and the dataset-building phases. Pick the dataset to run against, locate the code, and (in `experiment` mode) choose parallel vs serial execution, then tail into Phase 5's replay loop at `detect-replay-capabilities`. `wizard` / `dataset` / `investigate` modes never pass through here, they reach `detect-replay-capabilities` directly from Phase 4.
 
 1. **Run only when mode is `experiment` or `benchmark`.**
 
@@ -616,7 +614,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
       - In `benchmark` mode, the dataset just needs **≥1 trace**: benchmark replays the entire dataset against the current code regardless of label mix (an all-passing dataset is a valid regression baseline).
 
    - **no datasets exist for this function (`list_datasets` returned empty), or the picked dataset fails the mode's usability gate (experiment: no validated failing labels; benchmark: no traces at all)**: tell the user the function has no usable dataset yet and recommend running `$bitfab:assistant dataset <key>` first; then stop the flow (the cleanup step closes Studio if one was opened) → step 1 of the Cleanup phase
-   - **dataset loaded (experiment: ≥1 validated failing label; benchmark: ≥1 trace)**: summarize the dataset for the user (counts of pass/fail) and the failure annotations. In `experiment` mode, pick a first experiment from the failure patterns. In `benchmark` mode, confirm the dataset and proceed to replay the full set → step 3 (mode `benchmark`); stop (mode `add-trace` or `replay`); otherwise step 2
+   - **dataset loaded (experiment: ≥1 validated failing label; benchmark: ≥1 trace)**: summarize the dataset for the user (counts of pass/fail) and the failure annotations. In `experiment` mode, pick a first experiment from the failure patterns. In `benchmark` mode, confirm the dataset and proceed to replay the full set → step 1 of the Phase 5: Iterate with Replay phase (mode `benchmark`); stop (mode `add-trace` or `replay`); otherwise step 2
 2. **Run only when mode is `experiment`.**
 
    **Decide once: parallel worktree subagents, or serial in this main agent.** The check is whether subagent worktree sessions would inherit bypass permissions.
@@ -625,9 +623,16 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    Hold the chosen mode in working context. Every iteration below (`make-change`, `replay-against-dataset`, `evaluate-results`) honors it.
 
-   - **(unreachable on this editor)**: **Parallel mode.** For each independent experiment, fork to a subagent using the Agent tool with `isolation: "worktree"` and `subagent_type: "general-purpose"`. The subagent edits its worktree, runs replay, returns its scored items + `testRunId` to this main agent → step 3
-   - **always**: **Serial mode.** Iterate experiments one at a time in this main agent. Subagent worktrees wouldn't inherit bypass permissions, so their Edit tool would be denied → step 3
-3. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
+   - **(unreachable on this editor)**: **Parallel mode.** For each independent experiment, fork to a subagent using the Agent tool with `isolation: "worktree"` and `subagent_type: "general-purpose"`. The subagent edits its worktree, runs replay, returns its scored items + `testRunId` to this main agent → step 1 of the Phase 5: Iterate with Replay phase
+   - **always**: **Serial mode.** Iterate experiments one at a time in this main agent. Subagent worktrees wouldn't inherit bypass permissions, so their Edit tool would be denied → step 1 of the Phase 5: Iterate with Replay phase
+
+## Phase 5: Iterate with Replay
+
+In `experiment` mode this is an iterative improvement loop (each iteration makes a change and replays). In `benchmark` mode it is a single replay of the current code followed by a terminal scorecard, no changes, no iteration.
+
+This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` modes arrive from Phase 5 Setup (dataset already picked); `wizard` / `dataset` / `investigate` modes arrive from Phase 4 (dataset built in Phase 3). `openStudioTo.js` resolves the active session automatically. `benchmark` mode opens Studio only when the run opted in with the `studio` keyword; without it, benchmark opens no Studio and runs terminal-only.
+
+1. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Detect replay script capabilities.** Check what the replay script supports. These flags determine how experiment results are tracked and displayed. **If you already ran this step in Phase 2 earlier in this session, skip it and continue to `make-change` (or `replay-against-dataset` in benchmark mode).**
 
@@ -668,9 +673,9 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    >
    > [if !supportsInputAdapters] **Input adapters**: replay can't recover traces when the function's signature drifts after capture (fixed by upgrading the SDK)"
 
-   > A) **Upgrade the replay script**: regenerate the script with full support, then continue *(recommended)* → step 4
-   > B) **Continue without**: run experiments with the current script; missing features are skipped → step 5
-4. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
+   > A) **Upgrade the replay script**: regenerate the script with full support, then continue *(recommended)* → step 2
+   > B) **Continue without**: run experiments with the current script; missing features are skipped → step 3
+2. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Upgrade the SDK and replay script.** The replay script references SDK APIs (`experimentGroupId`, `codeChangeDescription`, per-item `traceId`, `adaptInputs` / `adapt_inputs`) that require a recent SDK. Upgrade the SDK first, then regenerate the script.
 
@@ -689,7 +694,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    Do NOT invoke `$bitfab:setup replay` as a separate skill; edit the script inline here.
 
    **3. Re-check capabilities.** After editing, re-check against the **installed SDK dist** (not just the script): grep the replay JS for `experimentGroupId` / `codeChangeDescription`, grep the SDK `.d.ts` for `ReplayItem.traceId` (the authoritative replay-trace-ID signal), and grep the SDK for `adaptInputs` / `adapt_inputs` (the input-adapter hook), and grep the SDK for `datasetId` / `dataset_id` (durable dataset attribution). Update the flags in working context. If any are still missing after both upgrades, note it but continue.
-5. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
+3. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Generate the experiment group ID and open the experiments page before making changes or running replay.** This lets the user watch results stream in live from the moment replay starts.
 
@@ -719,7 +724,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    **Token-cost lens (`&tokens=1&tokenType=<all|uncached>`).** When the URL carries `&tokens=1` the page turns on the token-cost lens: each trace and the experiment header show the original → replay total-token trend, streaming in next to pass/fail. `&tokenType=all` counts **all** tokens (`input + output`, cache reads included), tinted indigo (cheaper) / amber (costlier); `&tokenType=uncached` switches the same trend to the **uncached** basis (`(input - cached) + output`), tinted cyan / orange so it reads apart from the all-token view. A "Token count: All | Uncached" toggle in the page header flips it live too, and overrides the URL until the next tokens-bearing nav. On a quality run (`costRun` false) `<tokensSuffix>` resolves to nothing and the page looks exactly as it does today, so a non-cost run never carries the lens.
 
    This is a navigation call, not a long-running process. The existing Studio session handles it. If `supportsExperimentGroups` is false, skip this navigation (the `open-experiments` fallback will navigate with `testRunIds` after the replay completes).
-6. **Run only when mode is `wizard`, `dataset`, `experiment` or `investigate`.**
+4. **Run only when mode is `wizard`, `dataset`, `experiment` or `investigate`.**
 
    **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Making changes"`.
 
@@ -729,11 +734,11 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    - For every file you intend to edit in this experiment: **read the file with the Read tool first** and keep its full contents in working memory as the **before** snapshot. Then edit. Then **read the file again** to capture the **after** snapshot. Both snapshots are required by the next step (`replay-against-dataset`) so the experiment dashboard can render the literal edit alongside the results, this is per-experiment, not cumulative
    - Hold a one-line **change description** in working memory too (e.g. "fix off-by-one in retry logic", "tighten extraction prompt"). It will be the experiment's title in the viewer
    - If a file is newly created, the before snapshot is the empty string `""`. If a file is deleted, the after snapshot is `""`. The path is always the repo-relative file path, no `repo`, `commit`, or other context fields
-7. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
+5. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Running replay"`.
 
-   **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `wizard` and `dataset` modes, or rehydrated at the start of this phase in `experiment` and `benchmark` modes). The experiment group ID was already generated in the `open-experiments-before-replay` step (which also opened the experiments page in Studio in non-benchmark modes, and in `benchmark` mode only when the `studio` flag was passed).
+   **Replay against the dataset.** Collect the trace IDs from the labeled dataset (built in Phase 3 in `wizard` and `dataset` modes, or rehydrated in Phase 5 Setup's `pick-dataset` step in `experiment` and `benchmark` modes). The experiment group ID was already generated in the `open-experiments-before-replay` step (which also opened the experiments page in Studio in non-benchmark modes, and in `benchmark` mode only when the `studio` flag was passed).
 
    **In `benchmark` mode, skip the code-change payload entirely.** Benchmark makes no experiment-style edits to the traced function, so there is no code diff to capture. Omit `--code-change` from the invocation. The replay evaluates the current code as-is against the labeled dataset. Use `"Benchmark: current code baseline"` as the change description for display purposes. (Infra fixes are still allowed when a gap blocks the run, upgrading the SDK / replay script in `detect-replay-capabilities`, or adding `mockOnReplay` to a failing child span below, since none of those change the function's measured behavior. What you must not do is edit the traced function to alter its output.)
 
@@ -801,7 +806,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    - `total`, `result.items.length`; `0` or non-zero exit code = whole-replay crash
 
    If `completed === 0`, do not score pass/fail on an empty set, branch to `check-replay-health`. Carry `shapeErrored` forward so `check-replay-health` routes shape mismatches to input adaptation instead of burying them as infra noise.
-8. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
+6. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Route on the counts and exit code.** Goal: keep infra noise out of evaluation. Read a sample of `item.error` strings (and stderr on crash) first to identify the DB-shaped pattern (missing record, FK / unique constraint, write rejected, connection refused, missing env).
 
@@ -816,12 +821,12 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    After whichever workaround the user picks, re-run `replay-against-dataset` and re-check health. If the user can't or won't do either, stop and report, don't fabricate a workaround on your own.
 
-   - **errors are shape mismatches, not infra (`shapeErrored` dominates the errored items: the recorded inputs don't fit the function's current signature)**: the function's shape drifted since these traces were captured, so replay can't call it with the recorded inputs. This is recoverable: route to `adapt-replay-inputs` to map the recorded inputs onto the current signature, then re-run → step 9
-   - **whole replay crashed (non-zero exit, total is 0, or unparseable stdout)**: show stderr / exit code, diagnose, confirm a script fix with the user, apply, loop back to `replay-against-dataset` → step 7
-   - **every item errored with INFRA errors (completed is 0, total non-zero, and the errors are NOT predominantly `shapeErrored`, those take the shape-mismatch branch above)**: systemic infra failure (usually env mismatch). Diagnose, confirm a script fix with the user, loop back → step 7
-   - **high INFRA error rate (over half of items errored, and `shapeErrored` is not the dominant cause, shape mismatches take the branch above)**: signal is noisy. Flag the rate and ask the user whether to fix the env and retry, or proceed with the partial signal → step 10
-   - **healthy or mixed run (at least one completed item, infra errors at most half of total)**: proceed. Carry `infraErrored` forward, surface as its own bucket in the final report (the share-results step, or the benchmark scorecard's Unreplayable row in `benchmark` mode), never folded into pass/fail → step 10
-9. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
+   - **errors are shape mismatches, not infra (`shapeErrored` dominates the errored items: the recorded inputs don't fit the function's current signature)**: the function's shape drifted since these traces were captured, so replay can't call it with the recorded inputs. This is recoverable: route to `adapt-replay-inputs` to map the recorded inputs onto the current signature, then re-run → step 7
+   - **whole replay crashed (non-zero exit, total is 0, or unparseable stdout)**: show stderr / exit code, diagnose, confirm a script fix with the user, apply, loop back to `replay-against-dataset` → step 5
+   - **every item errored with INFRA errors (completed is 0, total non-zero, and the errors are NOT predominantly `shapeErrored`, those take the shape-mismatch branch above)**: systemic infra failure (usually env mismatch). Diagnose, confirm a script fix with the user, loop back → step 5
+   - **high INFRA error rate (over half of items errored, and `shapeErrored` is not the dominant cause, shape mismatches take the branch above)**: signal is noisy. Flag the rate and ask the user whether to fix the env and retry, or proceed with the partial signal → step 8
+   - **healthy or mixed run (at least one completed item, infra errors at most half of total)**: proceed. Carry `infraErrored` forward, surface as its own bucket in the final report (the share-results step, or the benchmark scorecard's Unreplayable row in `benchmark` mode), never folded into pass/fail → step 8
+7. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **The recorded inputs don't fit the function's current signature.** Replay pulls each trace's inputs exactly as they were captured against the signature AT TRACE TIME, then spreads them into the live function. When the shape drifted since capture, that spread throws (the `shapeErrored` items from `replay-against-dataset`). The fix is an **input adapter**: a per-trace transform, applied inside the SDK between fetch and call, that reshapes the recorded inputs onto the current signature so replay can run. It is the SDK's `adaptInputs` hook (TypeScript `replay({ adaptInputs })`) / `adapt_inputs` argument (Python `replay(adapt_inputs=...)`). You author the transform; the SDK applies it.
 
@@ -842,15 +847,15 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    **Step 5: wire it in and re-run.** Write the adapter to its own file next to the replay script (TS `scripts/replay-adapters/<name>.ts` exporting `adaptInputs`; Python `scripts/replay_adapters/<name>.py` defining `adapt_inputs(args, kwargs, ctx)`; Ruby `scripts/replay_adapters/<name>.rb` defining an adapter lambda). Then edit the replay script to import it and pass it to this pipeline's `replay()` call as `adaptInputs` / `adapt_inputs` (see the Replay section for the exact import shape). Editing the replay script here is expected. Loop back to `replay-against-dataset`, re-run, and confirm the `shapeErrored` items cleared.
 
-   - **an adapter is in place (user approved a new mapping, or a persisted adapter already covers the current shape) and the replay script loads it**: re-run with the adapter applied. Loop back to `replay-against-dataset` → step 7
-   - **the SDK lacks the hook (`supportsInputAdapters` false), the user declines adapting, or some inputs can't be faithfully mapped (new required input with no analog)**: do not fabricate inputs. Carry the unmappable `shapeErrored` trace IDs as their own **shape-incompatible** bucket (each with a one-line reason), distinct from infra errors and never scored pass/fail/regression, and surface it in the final report (share-results, or the benchmark scorecard's Unreplayable row). If any items DID complete (partial adaptation), proceed to evaluate them; otherwise this is a terminal report path → step 10
-10. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
+   - **an adapter is in place (user approved a new mapping, or a persisted adapter already covers the current shape) and the replay script loads it**: re-run with the adapter applied. Loop back to `replay-against-dataset` → step 5
+   - **the SDK lacks the hook (`supportsInputAdapters` false), the user declines adapting, or some inputs can't be faithfully mapped (new required input with no analog)**: do not fabricate inputs. Carry the unmappable `shapeErrored` trace IDs as their own **shape-incompatible** bucket (each with a one-line reason), distinct from infra errors and never scored pass/fail/regression, and surface it in the final report (share-results, or the benchmark scorecard's Unreplayable row). If any items DID complete (partial adaptation), proceed to evaluate them; otherwise this is a terminal report path → step 8
+8. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Route on whether replay trace IDs are available.** Check the `hasTraceIds` flag from `replay-against-dataset` (this confirms the tentative `supportsReplayTraceIds` flag from `detect-replay-capabilities`). This determines whether verdicts can be persisted to the server and whether the experiments page in Studio will show meaningful results.
 
-   - **replay trace IDs are populated (`hasTraceIds` is true)**: the SDK and server support trace ID mapping. In non-benchmark modes, open the experiments page in Studio first (so the user can watch verdicts populate in real time), then evaluate and persist labels. In `benchmark` mode without the `studio` flag no Studio is open, so `open-experiments` self-skips: go straight to evaluating and persisting labels. In `benchmark` mode with the `studio` flag, `open-experiments` behaves like other modes → step 14
-   - **replay trace IDs are null (`hasTraceIds` is false)**: tell the user: "Your SDK doesn't support replay trace IDs, so experiment results can't be persisted to Studio or compared across iterations. Upgrade your SDK and run `$bitfab:setup replay` to regenerate the script. Evaluating in-agent for now." Then proceed to text-only evaluation so the user still sees comparison results in-agent, without the Studio experiments page → step 11
-11. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
+   - **replay trace IDs are populated (`hasTraceIds` is true)**: the SDK and server support trace ID mapping. In non-benchmark modes, open the experiments page in Studio first (so the user can watch verdicts populate in real time), then evaluate and persist labels. In `benchmark` mode without the `studio` flag no Studio is open, so `open-experiments` self-skips: go straight to evaluating and persisting labels. In `benchmark` mode with the `studio` flag, `open-experiments` behaves like other modes → step 12
+   - **replay trace IDs are null (`hasTraceIds` is false)**: tell the user: "Your SDK doesn't support replay trace IDs, so experiment results can't be persisted to Studio or compared across iterations. Upgrade your SDK and run `$bitfab:setup replay` to regenerate the script. Evaluating in-agent for now." Then proceed to text-only evaluation so the user still sees comparison results in-agent, without the Studio experiments page → step 9
+9. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Evaluating results"`.
 
@@ -863,13 +868,13 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    - Unreplayable items (`item.error` set) go in their own bucket.
 
    Hold the verdicts in working context for the final report, the `share-results` step in `wizard`/`dataset`/`experiment`/`investigate` modes, or the **benchmark scorecard** in `benchmark` mode. This step's `next` routes there directly: it does NOT run the `evaluate-results` (persist) or `verify-replay-labels` steps. Since trace IDs are unavailable, do NOT attempt to run `persistReplayLabels.js` or open the experiments page; the report is the terminal step from here.
-12. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
+10. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Evaluating results"`.
 
    **Evaluate against labels & annotations.** Score only items where `item.error` is unset. Items with `item.error` set are unreplayable (already classified) and go in their own bucket, never pass, fail, or regression.
 
-   For each completed (non-errored) replay item, derive a verdict by comparing the replay's new output against the original trace's label and annotation (from Phase 3 in `wizard`/`dataset` modes, or loaded by `pick-dataset` at the start of this phase in `experiment` and `benchmark` modes):
+   For each completed (non-errored) replay item, derive a verdict by comparing the replay's new output against the original trace's label and annotation (from Phase 3 in `wizard`/`dataset` modes, or loaded by `pick-dataset` in Phase 5 Setup in `experiment` and `benchmark` modes):
 
    - **fail**-labeled original: does the replay's new output address the annotation? If yes → `label: true` (PASS). If no → `label: false` (FAIL). Use the annotation as the acceptance criterion.
    - **pass**-labeled original: preserved → `label: true` (PASS). regressed → `label: false` (FAIL).
@@ -917,15 +922,15 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    4. Read its single JSON line on stdout. Hold the parsed result for the next step.
 
    **Spill working notes to a separate tmp file if context gets big.** Don't conflate working notes with the verdicts file, the script deletes the verdicts file on success.
-13. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
+11. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Verify replay labels persisted.** Route on the `status` field of the JSON the script printed in `evaluate-results`. The script is the deterministic gate, if it didn't return `ok`, the agent's verdicts are NOT yet on the replay traces and the experiment delta will be wrong on the next iteration.
 
-   - **`status: "ok"` (every replay trace has a verdict or explicit skip persisted)**: labels are persisted on the replay traces and the verdicts file is gone. In `benchmark` mode continue to the benchmark scorecard (a terminal report, no iteration); in all other modes continue to share-results (experiments page was already opened before evaluation) → step 1 of the Phase Benchmark: Scorecard phase (mode `benchmark`); stop (mode `add-trace` or `replay`); otherwise step 15
-   - **`status: "missing-coverage"` (script returned a non-empty `missingTraceIds` array)**: you under-verdicted. Read the missing replay trace IDs (use `mcp__Bitfab__read_traces` with `scope: "full"` if you didn't already, since you are persisting pass/fail verdicts on their span content), decide each one (PASS / FAIL with annotation, or `skip: true` if genuinely ambiguous), write a NEW verdicts file at the same path covering ALL the originally expected IDs (the script needs the full `expectedTraceIds` list each call, not just the gaps), and re-run the script. Loop back here with the new result → step 13
-   - **`status: "invalid-input"` (malformed verdicts JSON or missing fields)**: the verdicts file you wrote doesn't match the schema. Read the script's `message` field, fix the JSON (most common: missing annotation on a non-skip entry, missing traceId, expectedTraceIds empty), and re-run the script. Loop back here → step 13
-   - **`status: "mcp-error"` (MCP call to update_agent_labels failed mid-batch)**: network or auth error. The script's `partialTraceIds` lists which IDs were already persisted. Tell the user, recommend re-running the script (it's idempotent, already-persisted labels just upsert), and loop back here. If it keeps failing, stop and surface the error → step 13
-14. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
+   - **`status: "ok"` (every replay trace has a verdict or explicit skip persisted)**: labels are persisted on the replay traces and the verdicts file is gone. In `benchmark` mode continue to the benchmark scorecard (a terminal report, no iteration); in all other modes continue to share-results (experiments page was already opened before evaluation) → step 1 of the Phase Benchmark: Scorecard phase (mode `benchmark`); stop (mode `add-trace` or `replay`); otherwise step 13
+   - **`status: "missing-coverage"` (script returned a non-empty `missingTraceIds` array)**: you under-verdicted. Read the missing replay trace IDs (use `mcp__Bitfab__read_traces` with `scope: "full"` if you didn't already, since you are persisting pass/fail verdicts on their span content), decide each one (PASS / FAIL with annotation, or `skip: true` if genuinely ambiguous), write a NEW verdicts file at the same path covering ALL the originally expected IDs (the script needs the full `expectedTraceIds` list each call, not just the gaps), and re-run the script. Loop back here with the new result → step 11
+   - **`status: "invalid-input"` (malformed verdicts JSON or missing fields)**: the verdicts file you wrote doesn't match the schema. Read the script's `message` field, fix the JSON (most common: missing annotation on a non-skip entry, missing traceId, expectedTraceIds empty), and re-run the script. Loop back here → step 11
+   - **`status: "mcp-error"` (MCP call to update_agent_labels failed mid-batch)**: network or auth error. The script's `partialTraceIds` lists which IDs were already persisted. Tell the user, recommend re-running the script (it's idempotent, already-persisted labels just upsert), and loop back here. If it keeps failing, stop and surface the error → step 11
+12. **Run only when mode is `wizard`, `dataset`, `experiment`, `investigate` or `benchmark`.**
 
    **Open experiment viewer (fallback).** This step only runs when replay trace IDs are available (routed here from `check-trace-id-support`). If no `testRunId`s were captured, skip this step and continue to evaluate.
 
@@ -940,7 +945,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
    ```
 
    In `benchmark` mode (with the `studio` flag), append `&mode=benchmark` here too so the page shows benchmark terminology. Likewise, when `costRun` is set (classified in argument routing; see the token-cost lens note in `open-experiments-before-replay`), append the token-cost suffix (always with an explicit basis) so the token-cost columns show: `&tokens=1&tokenType=all` for `costBasis = all`, or `&tokens=1&tokenType=uncached` for `costBasis = uncached`, e.g. `/studio/experiments?testRunIds=<testRunId1>,<testRunId2>&tokens=1&tokenType=uncached`. The command navigates an existing session or opens a new one automatically.
-15. **Run only when mode is `wizard`, `dataset`, `experiment` or `investigate`.**
+13. **Run only when mode is `wizard`, `dataset`, `experiment` or `investigate`.**
 
    **Share results to the user.**
 
@@ -970,7 +975,7 @@ In `experiment` mode this is an iterative improvement loop (each iteration makes
 
    Ensure your question includes your recommended next step.
 
-   > A) **Keep iterating**: run another experiment from the plan *(recommended)* → step 5
+   > A) **Keep iterating**: run another experiment from the plan *(recommended)* → step 3
    > B) **Stop and wrap up**: move to the final summary → step 1 of the Phase 6: Validate & Wrap Up phase
 
 ## Phase Replay: Single-Trace Quick Replay
