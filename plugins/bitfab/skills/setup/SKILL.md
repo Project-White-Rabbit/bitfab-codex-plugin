@@ -288,7 +288,7 @@ Bitfab captures every AI function call, inputs, outputs, and errors, so you can 
 7. Before reading any code to find workflows, ask the user how they'd like to find what to instrument first:
 
    > A) **Find workflows for me**: scan the codebase for every AI call, agent, and LLM-driven decision *(recommended)* → step 8
-   > B) **I'll point you to it**: name the file, function, or directory to instrument → step 9
+   > B) **Instrument a specific target**: name the file, function, or directory to instrument → step 9
 
    If they pick **A**, do the full codebase scan in step 8. If they pick **B**, ask which file, function, or directory they want to instrument (if they haven't already named it) and go to step 9 to read just that location, skipping the broad scan.
 8. Read the codebase to identify ALL AI workflows, every place the app makes LLM calls, runs agents, or makes AI-driven decisions. For each, find the **outer workflow boundary** (per the rule in step 6), and also note any meaningful work **above** the agent/LLM call (auth, validation, input prep, retry/orchestration loops, multi-agent coordination), **alongside** it (custom LLM calls outside the SDK, tools that aren't registered with the SDK, downstream services), and **below** it (post-processing, parsing, persistence). These are the manual spans that will sit around any auto-captured SDK content.
