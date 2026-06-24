@@ -769,6 +769,8 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
 
    **Generate an experiment group ID.** Generate a fresh UUID to use as the `experimentGroupId` for this iteration. This groups all test runs from this iteration together so the experiments page can stream results live as the replay runs.
 
+   Treat the UUID as a literal value: substitute it directly into the `<experimentGroupId>` slot of each command below (and into `--experiment-group-id` in `replay-against-dataset`), exactly like `<tokensSuffix>`. **Do not assign it to a shell variable named `GID`, `UID`, `EUID`, or `EGID`** (in zsh these are read-only/integer special parameters bound to the process IDs, so `GID="$(uuidgen)"` makes the shell evaluate the UUID as arithmetic and throws `bad math expression: operator expected at '<hex>...'`). If you keep it in a variable at all, use a plain lowercase name like `gid`; a double-quoted experiments URL with `&` is otherwise shell-safe. If you ever see that `bad math expression` error, it is the variable name, not the `&` or the query string: rename the variable, do not rewrite the command.
+
    **Open the experiments page.** Pick exactly one case (they are mutually exclusive):
 
    - **`benchmark` mode WITHOUT the `studio` opt-in:** do NOT run any `openStudio` navigation (no Studio is open). Just generate the experiment group ID above for tagging the test run on the server, then continue to `replay-against-dataset`.
