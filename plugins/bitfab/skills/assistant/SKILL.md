@@ -138,6 +138,7 @@ It never opens a second window while a session is recorded: it either reuses it 
 Output events:
 - `{"event":"navigated","sessionId":"...","path":"..."}`, reused an existing session.
 - `{"event":"started","sessionId":"..."}`, opened a new Studio window.
+- `{"event":"monitor","sessionId":"...","eventFile":"..."}`, the durable event stream path. Tail `eventFile` for the live in-session events (the daemon appends them there for the whole session, independent of any running command).
 - `{"event":"not-responding","sessionId":"..."}`, a recorded session exists but the window did not respond (the navigation retries via ping-pong before reporting this, so the tab was pinged twice and never answered). **Every** Studio-opening command emits this on a stale session (`openStudioTo.js` and the dataset/experiment/trace-plan commands alike), and none of them opens a duplicate window. **This is a gate.** Recommend the user refresh or reopen the Studio tab in their browser, then ask the user with two options: **Try again** (re-run the command that gated, the record is still on disk, so a window that came back gets reused) or **Open a new Studio** (run `node "${BITFAB_PLUGIN_DIR}/dist/commands/clearStudioSession.js"` to drop the stale record, then re-run the command, which now opens a fresh window). Only clear the record after the user approves.
 - `{"event":"open-failed","sessionId":"...","reason":"..."}`, failed to open a new Studio. Surface the error.
 
@@ -150,12 +151,12 @@ The gate fires only when a recorded window went unreachable with **no close sign
    Open Studio at the initial path for this mode. `openStudioTo.js` is the single entry point for all Studio operations: it navigates an existing session or opens a new one automatically.
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" <path> --monitor
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js" <path>
    ```
 
    The command resolves this agent's active session on its own and reads auth from local config, no session id or credentials to pass.
 
-   **The `--monitor` flag is load-bearing and belongs ONLY on this step.** This is the one step that establishes the durable event loop for the whole run. `--monitor` makes it the single monitor whether it opens a fresh window OR reuses one left over from a prior run, without it, reusing an existing window would navigate-and-exit and the run would have NO monitor, silently missing Done / Edit-with-agent / session-ended. Every later `node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js"` call (dataset page, experiments page, trace plans) is a plain navigation: omit `--monitor` so it fires-and-exits instead of spawning a duplicate poller.
+   **The Studio daemon is the durable event buffer, not this process.** `openStudioTo.js` opens or navigates the session, prints the handshake (including a `monitor` line with the path to a durable event file), and returns. Events are appended to that file by the daemon for the whole session, whether or not any command is running, so you can never miss Done / Edit-with-agent / session-ended. **Capture the `eventFile` path from this step's `monitor` line; the `await-event` step tails that file, not this process's output.** Every later `node "${BITFAB_PLUGIN_DIR}/dist/commands/openStudioTo.js"` call (dataset page, experiments page, trace plans) is the same fire-and-forget navigation against the same session and the same event file: you do not start a second monitor for them.
 
    **The path MUST start with `/studio`.** Never pass `/`, a bare URL, or any path outside the `/studio/` route tree.
 
@@ -168,17 +169,17 @@ The gate fires only when a recorded window went unreachable with **no close sign
 
    `replay` mode never reaches this step (it runs entirely in-chat with no Studio session), see Phase Replay.
 
-   With `--monitor` this command enters an event loop and stays running for the whole session, whether it opened a fresh window or reused an existing one. Run it via your runtime's "long-running exec session" mechanism. It is the single backgrounded process for the run; the later navigation steps (without `--monitor`) exit immediately.
+   Run it via your runtime's "long-running exec session" mechanism and capture its stdout. On the daemon path it prints the handshake and exits immediately; in the rare no-daemon fallback it stays alive writing the event file itself. Either way you do the same thing: read the handshake, then tail the `eventFile` in `await-event`.
 
-   The script outputs JSON lines on stdout (see the Studio Lifecycle intro for the full event reference):
+   The script outputs these handshake JSON lines on stdout (see the Studio Lifecycle intro for the full event reference):
 
    - `{"event":"started","sessionId":"..."}`, new Studio opened. The session is written to disk; all subsequent `openStudioTo.js` and `pushActivity.js` calls resolve it automatically. You do not need to track the sessionId.
    - `{"event":"navigated","sessionId":"...","path":"..."}`, navigated an existing session.
    - `{"event":"auth-required","sessionId":"..."}`, user needs to sign in. Wait for `authenticated`.
    - `{"event":"authenticated","sessionId":"..."}`, user signed in. Continue.
-   - `{"event":"session-ended","sessionId":"..."}`, user closed Studio. Process exits.
+   - `{"event":"monitor","sessionId":"...","eventFile":"..."}`, the durable event stream lives at `eventFile`. **Record this path**, the `await-event` step tails it for the live stream (Done / Edit-with-agent / session-ended).
 
-   Status messages go to stderr. Filter to JSON lines only.
+   Status messages go to stderr. Filter to JSON lines only. The live in-session events (Done, Edit-with-agent, session-ended) do NOT appear on this process's stdout, they go to the `eventFile`; tail it in `await-event`.
 
    **Recovering after compaction:** Automatic. `openStudioTo.js` and `pushActivity.js` read the active-session file on disk.
 
@@ -351,7 +352,7 @@ Reached only from `investigate` mode. The user is describing an issue they want 
    > B) **Write an analysis report**: save the findings to a markdown file I can share or revisit later → step 4
    > C) **Build a labeled dataset**: use these traces as seed candidates and label them so we can iterate against them later *(recommended)* → step 1 of the Phase 3: Pick a Dataset and Label Traces phase
 
-   Options A and B end at the cleanup step, which closes Studio and stops its background process. Option C continues through dataset building, diagnosis, and experiments, with Studio staying open throughout until cleanup at wrap-up.
+   Options A and B end at the cleanup step, which closes Studio. Option C continues through dataset building, diagnosis, and experiments, with Studio staying open throughout until cleanup at wrap-up.
 4. Write a markdown report capturing the investigation. Path: `.bitfab/analysis/<traceFunctionKey>-<YYYY-MM-DD-HHmm>.md` (create the `.bitfab/analysis/` directory if missing; fall back to a path under the repo root or `os.tmpdir()` if the project root isn't writable). Use the `Write` tool with this structure:
 
    ```markdown
@@ -514,13 +515,13 @@ In `dataset` mode this phase is the entry point, Phase 1 (function picker) and P
    The dataset review page is already open in Studio (opened earlier in `open-page`). Each trace you attach streams in live via real-time events, so the user sees them appear instantly. After attaching, tell the user the dataset is populated and ready for their review, then proceed to `await-event`.
 10. 🚨 **MANDATORY: Set up a Monitor IMMEDIATELY.** Do not skip this step or defer it. The user is reviewing traces in Studio right now and will click Done or Edit with agent. If you don't monitor, you will miss the event.
 
-   Use the **Monitor tool** to tail the Studio background process output for new JSON events:
+   Use the **Monitor tool** to tail the durable Studio event file for new JSON events:
 
    ```bash
-   tail -f -n +<NEXT_LINE> <output-file> | grep -E --line-buffered '"event"'
+   tail -f -n +<NEXT_LINE> <eventFile> | grep -E --line-buffered '"event"'
    ```
 
-   `<output-file>` is the path returned when you started the `openStudioTo.js` background process. `<NEXT_LINE>` is one past the last line you read (e.g. if you read 5 lines, use `-n +6`).
+   `<eventFile>` is the path from the `monitor` line emitted by `openStudioTo.js` in the `open` step (the daemon appends events here for the whole session, so tailing it replays anything that happened before you attached). `<NEXT_LINE>` is one past the last line you read (e.g. if you read 5 lines, use `-n +6`).
 
    The Monitor streams ALL events from Studio. Route on the `event` field in each JSON line:
 
@@ -528,7 +529,7 @@ In `dataset` mode this phase is the entry point, Phase 1 (function picker) and P
    - `{"event":"edit-with-agent",...,"datasetId":"..."}`, user clicked **Edit with agent**. Go to the modify loop, then come back here.
    - `{"event":"session-ended",...}`, user closed Studio entirely.
    - `{"event":"navigated",...}`, Studio navigated to a new page (informational).
-   - `{"event":"click",...}` / `{"event":"focus",...}`, user interaction events (used during template editing).
+   - `{"event":"element-clicked",...}` / `{"event":"focusChanged",...}`, user interaction events (used during template editing).
 
    **Stay silent while monitoring.** Do not narrate each event. Only speak when you reach a branch point or hit an error.
 
@@ -1166,7 +1167,7 @@ Reached only from `replay` mode. The user already has a trace ID and (usually) a
 
 **Run only when mode is `wizard`, `dataset`, `experiment`, `cost-optimize`, `investigate`, `benchmark` or `replay`.**
 
-1. Close Studio. Run this unconditionally: it resolves the active session from disk, closes the Studio tab, stops the background `openStudioTo.js` event process, and exits quietly (`{"event":"no-active-studio"}`) when nothing was opened:
+1. Close Studio. Run this unconditionally: it resolves the active session from disk, closes the Studio tab (the daemon ends the session and stops appending to the event file), and exits quietly (`{"event":"no-active-studio"}`) when nothing was opened:
 
    ```bash
    node "${BITFAB_PLUGIN_DIR}/dist/commands/closeStudio.js"

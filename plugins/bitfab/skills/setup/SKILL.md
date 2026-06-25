@@ -811,7 +811,7 @@ Templates control how a span's input / output renders in the Bitfab UI. They are
 
 ## Cleanup
 
-1. Close Studio. Run this unconditionally: it resolves the active session from disk, closes the Studio tab, stops the background `openStudioTo.js` event process, and exits quietly (`{"event":"no-active-studio"}`) when nothing was opened:
+1. Close Studio. Run this unconditionally: it resolves the active session from disk, closes the Studio tab (the daemon ends the session and stops appending to the event file), and exits quietly (`{"event":"no-active-studio"}`) when nothing was opened:
 
    ```bash
    node "${BITFAB_PLUGIN_DIR}/dist/commands/closeStudio.js"
