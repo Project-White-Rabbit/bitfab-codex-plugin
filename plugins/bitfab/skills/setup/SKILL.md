@@ -264,6 +264,8 @@ Bitfab captures every AI function call, inputs, outputs, and errors, so you can 
 
    **The root exists so the replay harness can re-invoke it as a plain lambda with serialized inputs**: that's what makes traces searchable (a coherent unit of behavior) and replayable (runnable against current code). The root must own its state setup, not consume a pre-built stateful object the replay script can't reconstruct. Frameworks are the sharpest case (LangGraph compiled graphs, Claude Agent SDK clients, LangChain chains all require constructors + special setup), but the rule generalizes to anything stateful, configured SDK clients, prepared models, cached routers, DB sessions. The root is therefore the outer workflow function that **builds** the framework / stateful object + invokes it + processes the output (API handler, message processor, job runner, pipeline coordinator), almost never the SDK's `run()` / `invoke()` itself.
 
+   **Wrap the code path that runs the real workload (serves traffic, processes the actual jobs), not an entrypoint that exists only to test or explore locally.** The test is role, not form: a cron-driven batch script or an ETL job is production and worth wrapping; a dev CLI or notebook that exists only to poke at the workflow is not. Instrument the real path even when you'll run it in dev to generate traces.
+
    **Hard constraint: every wrapped function's inputs and outputs must be serializable by the SDK's tracing layer so traces can be replayed.** Every span input and output gets serialized into the trace using the SDK's language-native serialization (TypeScript/JSON, Python/JSON via Pydantic, Ruby/`to_json`, Go/`json.Marshal`). If a wrapped function takes live runtime objects that don't round-trip through that serialization, the trace can't be replayed, and badly-failing inputs can drop the entire span on the floor (not just garble the input field). Examples of unserializable inputs:
    - browser objects (`MediaStream`, `RTCPeerConnection`, `WebSocket`, DOM refs)
    - HTTP `Request` / `Response`, stream writers, open sockets
@@ -353,6 +355,8 @@ Bitfab captures every AI function call, inputs, outputs, and errors, so you can 
 
    The trace plan's `Files changed:` list must include the replay script path for this cycle (new or edited) alongside the instrumented files.
 14. Tell the user how to run the app to generate the first trace AND, once traces exist, how to run the replay script for this pipeline, give exact command(s) for both. Do NOT run them yourself. (Omit the replay command for Go-only projects.)
+
+   **Generate the trace by driving the instrumented path, not by instrumenting a new one.** If the convenient local entrypoint (a dev CLI, script, or REPL) bypasses the wrapped root and calls the inner function directly, common when prod runs behind an orchestrator (Temporal, a job/queue worker), its trace won't match production. Say so, then steer to driving the real path or rerouting the harness through the wrapped entrypoint, never add a span to a dev/test-only entrypoint just to make its trace look right.
 15. **MANDATORY STOP, never silently end the cycle without the A/B/C/D prompt.** Ask the user (we recommend **A**: get a real trace flowing before instrumenting the next workflow):
 
    > A) **Wait for the first trace [current workflow]**: you run the app (or let me); I watch for the trace to land and report it *(recommended)* → step 10
