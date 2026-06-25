@@ -353,14 +353,14 @@ Bitfab captures every AI function call, inputs, outputs, and errors, so you can 
 
    The trace plan's `Files changed:` list must include the replay script path for this cycle (new or edited) alongside the instrumented files.
 14. Tell the user how to run the app to generate the first trace AND, once traces exist, how to run the replay script for this pipeline, give exact command(s) for both. Do NOT run them yourself. (Omit the replay command for Go-only projects.)
-15. **MANDATORY STOP, never silently end the cycle without the A/B/C/D prompt.** Ask the user (we recommend **A**: generate traces before instrumenting the next workflows):
+15. **MANDATORY STOP, never silently end the cycle without the A/B/C/D prompt.** Ask the user (we recommend **A**: get a real trace flowing before instrumenting the next workflow):
 
-   > A) **Generate traces [current workflow]** *(recommended)* → step 10
+   > A) **Wait for the first trace [current workflow]**: you run the app (or let me); I watch for the trace to land and report it *(recommended)* → step 10
    > B) **Instrument [next workflow]**: [why it's the next highest value] → step 10
    > C) **Instrument [other workflow]**: [alternative] → step 10
-   > D) **Done instrumenting**: proceed to Replay (in `wizard` mode) / Done (in `instrument` mode) → step 1 of the Replay phase (mode `wizard`); otherwise step 1 of the Cleanup phase
+   > D) **Done instrumenting**: stop adding workflows; continue to replay verification, or finish if you ran Instrument on its own → step 1 of the Replay phase (mode `wizard`); otherwise step 1 of the Cleanup phase
 
-   **For option A**, present the script to run to the user (allow them to let you run it for them). Before starting the wait, tell the user verbatim: `Polling for first trace (up to ~10 min), press Esc to cancel.` Then run in a shell (allow up to ~11 min): `node "${BITFAB_PLUGIN_DIR}/dist/commands/waitForTrace.js" <trace-function-key>`. The command blocks inside Node, polling Bitfab every 10s until a trace lands or the ~10 min timeout fires, so no agent tokens are burned while waiting. When it exits, parse the final stdout line as JSON: `{"status":"found","traceId":"…","url":"…"}` → report the trace URL; `{"status":"timeout",…}` → note that no trace arrived yet; `{"status":"interrupted",…}` → the user cancelled.
+   **For option A**, restate the run command from step 14 so they can run it (or let you run it for them). Before starting the wait, tell the user verbatim: `Run your app now to produce a trace (or tell me to run it for you). I'll watch and report the first trace when it lands, up to ~10 min. Press Esc to cancel.` Then run in a shell (allow up to ~11 min): `node "${BITFAB_PLUGIN_DIR}/dist/commands/waitForTrace.js" <trace-function-key>`. The command blocks inside Node, polling Bitfab every 10s until a trace lands or the ~10 min timeout fires, so no agent tokens are burned while waiting. When it exits, parse the final stdout line as JSON: `{"status":"found","traceId":"…","url":"…"}` → report the trace URL; `{"status":"timeout",…}` → note that no trace arrived yet; `{"status":"interrupted",…}` → the user cancelled.
 
    A, B, and C all return to step 10 for the selected workflow. Only D exits the Instrument loop. **If the next workflow the user wants isn't already in the discovered list** (common when the first cycle came from the point-to-it path, where step 9 only read the one named location), first run another discovery pass, scan via step 8 or read another named location via step 9, then present. Never tell the user there's nothing left to instrument just because the targeted read only surfaced one workflow.
 
