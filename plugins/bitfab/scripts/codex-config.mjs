@@ -3,23 +3,38 @@
  * Idempotent editor for ~/.codex/config.toml.
  *
  * Codex has no `plugin enable/disable` CLI, so the dev-build and toggle
- * skills need to rewrite TOML in place. The patterns we manage are narrow
- * (two plugin blocks and one local marketplace), so we use regex-based
- * surgical edits rather than a full TOML parser.
+ * skills need to rewrite TOML in place. We use regex-based surgical edits
+ * rather than a full TOML parser.
+ *
+ * Per-worktree isolation: Codex's config.toml is global with no project
+ * scoping, so unlike Claude we cannot have N worktree installs auto-select by
+ * directory. Instead each worktree gets its own `bitfab-internal-<basename>`
+ * marketplace and its own cache (builds never overwrite each other), and on
+ * session start we enable ONLY the current worktree's plugins while disabling
+ * every other `*@bitfab-internal-*` block (so two worktrees never expose
+ * duplicate skills) and pruning marketplaces whose worktree no longer exists.
  *
  * Usage:
- *   codex-config.mjs ensure-dev <configPath> <vendorPath>
- *   codex-config.mjs toggle     <configPath> <dev|prod>
+ *   codex-config.mjs ensure-dev <configPath> <vendorPath> <marketplaceName>
+ *   codex-config.mjs toggle     <configPath> <dev|prod>   <marketplaceName>
  */
 
 import fs from "node:fs"
 import path from "node:path"
 
-const [, , cmd, configPath, arg] = process.argv
+const [, , cmd, configPath, arg, arg2] = process.argv
 
 function usage() {
-  console.error("Usage: codex-config.mjs ensure-dev <configPath> <vendorPath>")
-  console.error("       codex-config.mjs toggle     <configPath> <dev|prod>")
+  console.error(
+    "Usage: codex-config.mjs ensure-dev <configPath> <vendorPath> <marketplaceName>",
+  )
+  console.error(
+    "       codex-config.mjs toggle     <configPath> <dev|prod>   <marketplaceName>",
+  )
+  console.error("       codex-config.mjs restore-prod  <configPath>")
+  console.error(
+    "       codex-config.mjs ensure-trust  <configPath> <projectPath>",
+  )
   process.exit(2)
 }
 
@@ -36,7 +51,9 @@ function readConfig() {
 
 function writeConfig(content) {
   fs.mkdirSync(path.dirname(configPath), { recursive: true })
-  const ending = content.endsWith("\n") ? content : `${content}\n`
+  // Collapse the blank-line gaps left when sections are removed.
+  const tidy = content.replace(/\n{3,}/g, "\n\n")
+  const ending = tidy.endsWith("\n") ? tidy : `${tidy}\n`
   fs.writeFileSync(configPath, ending)
 }
 
@@ -98,6 +115,34 @@ function setKey(content, header, key, value, opts = {}) {
   return `${lines.join("\n").replace(/\n*$/, "")}\n`
 }
 
+/** Read a single key's raw value from a section, or null. */
+function getKey(content, header, key) {
+  const lines = content.length ? content.split("\n") : []
+  const section = locateSection(lines, header)
+  if (!section) {
+    return null
+  }
+  const keyRe = new RegExp(`^\\s*${escapeRegex(key)}\\s*=\\s*(.+?)\\s*$`)
+  for (let i = section.start + 1; i < section.end; i++) {
+    const m = lines[i].match(keyRe)
+    if (m) {
+      return m[1]
+    }
+  }
+  return null
+}
+
+function unquote(value) {
+  if (value == null) {
+    return null
+  }
+  const trimmed = value.trim()
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\")
+  }
+  return trimmed
+}
+
 function quote(s) {
   return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
 }
@@ -122,43 +167,160 @@ function removeSection(content, header) {
   return lines.length ? `${lines.join("\n")}\n` : ""
 }
 
-function ensureDev(vendorPath) {
-  if (!vendorPath) {
+/**
+ * Every internal dev marketplace name currently in the config: `bitfab-internal`
+ * (legacy singleton) plus any `bitfab-internal-<basename>` per-worktree name.
+ * The prod `bitfab` marketplace is deliberately excluded.
+ */
+function listInternalMarketplaces(content) {
+  const names = new Set()
+  for (const line of content.split("\n")) {
+    const m = line.match(/^\[marketplaces\.(bitfab-internal(?:-.+)?)\]\s*$/)
+    if (m) {
+      names.add(m[1])
+    }
+  }
+  return [...names]
+}
+
+/** Cache dir Codex keeps for a given internal marketplace. */
+function cacheDirFor(mktName) {
+  const codexHome = path.dirname(path.resolve(configPath))
+  return path.join(codexHome, "plugins", "cache", mktName)
+}
+
+/** Remove a marketplace, its bitfab/bitfab-dev plugin blocks, and its cache. */
+function dropMarketplace(content, mktName) {
+  let next = removeSection(content, `[marketplaces.${mktName}]`)
+  next = removeSection(next, `[plugins."bitfab@${mktName}"]`)
+  next = removeSection(next, `[plugins."bitfab-dev@${mktName}"]`)
+  fs.rmSync(cacheDirFor(mktName), { recursive: true, force: true })
+  return next
+}
+
+function ensureDev(vendorPath, mktName) {
+  if (!vendorPath || !mktName) {
     usage()
   }
   const absVendor = path.resolve(vendorPath)
   let content = readConfig()
-  // Migrate away from the legacy bitfab-dev marketplace name. Idempotent.
-  content = removeSection(content, "[marketplaces.bitfab-dev]")
-  content = removeSection(content, '[plugins."bitfab@bitfab-dev"]')
+
+  // 1. Migrate legacy names (idempotent): the old `bitfab-dev` marketplace and
+  //    the pre-per-worktree singleton `bitfab-internal`. dropMarketplace clears
+  //    each one's marketplace block, BOTH its bitfab@ and bitfab-dev@ plugin
+  //    blocks, and its cache -- so no plugin entry is left pointing at a
+  //    marketplace that no longer exists.
+  content = dropMarketplace(content, "bitfab-dev")
+  if (mktName !== "bitfab-internal") {
+    content = dropMarketplace(content, "bitfab-internal")
+  }
+
+  // 2. Prune per-worktree marketplaces whose source dir is gone (worktree
+  //    deleted). Never prune the one we're about to (re)write.
+  for (const name of listInternalMarketplaces(content)) {
+    if (name === mktName) {
+      continue
+    }
+    const src = unquote(getKey(content, `[marketplaces.${name}]`, "source"))
+    if (src && !fs.existsSync(src)) {
+      content = dropMarketplace(content, name)
+      console.log(`[codex-config] pruned orphaned marketplace ${name}`)
+    }
+  }
+
+  // 3. Disable every other worktree's plugins so only the current worktree
+  //    exposes its skills (Codex would otherwise load duplicates from two
+  //    enabled same-named plugins).
+  for (const name of listInternalMarketplaces(content)) {
+    if (name === mktName) {
+      continue
+    }
+    for (const plugin of ["bitfab", "bitfab-dev"]) {
+      const header = `[plugins."${plugin}@${name}"]`
+      if (locateSection(content.split("\n"), header)) {
+        content = setKey(content, header, "enabled", "false")
+      }
+    }
+  }
+
+  // 4. Register the current worktree's marketplace + plugins.
   content = setKey(
     content,
-    "[marketplaces.bitfab-internal]",
+    `[marketplaces.${mktName}]`,
     "source_type",
     quote("local"),
   )
   content = setKey(
     content,
-    "[marketplaces.bitfab-internal]",
+    `[marketplaces.${mktName}]`,
     "source",
     quote(absVendor),
   )
-  content = setKey(
-    content,
-    '[plugins."bitfab@bitfab-internal"]',
-    "enabled",
-    "false",
-    { onlyIfMissing: true },
+  // A worktree must run the dev plugins, not prod (mirrors the Claude sidecar
+  // seeding): enable this worktree's bitfab + bitfab-dev and disable the prod
+  // bitfab marketplace. Codex's config is global, so this flips prod off for
+  // every session until a main-repo session calls `restore-prod` (see the
+  // SessionStart hook). The dev/prod `toggle` command can still override.
+  content = setKey(content, `[plugins."bitfab@${mktName}"]`, "enabled", "true")
+  // Enable bitfab-dev only if it was actually vendored into this marketplace.
+  // install-dev.sh skips vendoring bitfab-dev when bitfab-dev-codex-plugin isn't
+  // built, and the every-session reconcile can run against an older vendor; in
+  // either case enabling a plugin Codex can't find from the marketplace source
+  // would fail plugin load. Drop the block when absent so the config never
+  // claims an uninstalled plugin.
+  const devVendored = fs.existsSync(
+    path.join(absVendor, "plugins", "bitfab-dev"),
   )
+  if (devVendored) {
+    content = setKey(
+      content,
+      `[plugins."bitfab-dev@${mktName}"]`,
+      "enabled",
+      "true",
+    )
+  } else {
+    content = removeSection(content, `[plugins."bitfab-dev@${mktName}"]`)
+  }
+  content = setKey(content, '[plugins."bitfab@bitfab"]', "enabled", "false")
+
   writeConfig(content)
+  console.log(`[codex-config] marketplaces.${mktName}.source = ${absVendor}`)
+  console.log(`[codex-config] plugins."bitfab@${mktName}".enabled = true`)
   console.log(
-    `[codex-config] marketplaces.bitfab-internal.source = ${absVendor}`,
+    devVendored
+      ? `[codex-config] plugins."bitfab-dev@${mktName}".enabled = true`
+      : `[codex-config] bitfab-dev not vendored; left uninstalled`,
   )
-  console.log(`[codex-config] plugins."bitfab@bitfab-internal" block ensured`)
+  console.log(
+    `[codex-config] plugins."bitfab@bitfab".enabled = false (prod off)`,
+  )
 }
 
-function toggle(variant) {
-  if (variant !== "dev" && variant !== "prod") {
+/**
+ * Main-repo state: prod bitfab on, every internal/dev plugin off. Invoked by the
+ * SessionStart hook when a Codex session starts in this repo's main checkout, to
+ * undo the global prod-off that a prior worktree session set.
+ */
+function restoreProd() {
+  let content = readConfig()
+  for (const name of listInternalMarketplaces(content)) {
+    for (const plugin of ["bitfab", "bitfab-dev"]) {
+      const header = `[plugins."${plugin}@${name}"]`
+      if (locateSection(content.split("\n"), header)) {
+        content = setKey(content, header, "enabled", "false")
+      }
+    }
+  }
+  content = setKey(content, '[plugins."bitfab@bitfab"]', "enabled", "true")
+  writeConfig(content)
+  console.log(
+    `[codex-config] restored prod: plugins."bitfab@bitfab".enabled = true`,
+  )
+  console.log(`[codex-config] disabled all internal/dev plugins`)
+}
+
+function toggle(variant, mktName) {
+  if ((variant !== "dev" && variant !== "prod") || !mktName) {
     usage()
   }
   const devEnabled = variant === "dev" ? "true" : "false"
@@ -166,22 +328,46 @@ function toggle(variant) {
   let content = readConfig()
   content = setKey(
     content,
-    '[plugins."bitfab@bitfab-internal"]',
+    `[plugins."bitfab@${mktName}"]`,
     "enabled",
     devEnabled,
   )
   content = setKey(content, '[plugins."bitfab@bitfab"]', "enabled", prodEnabled)
   writeConfig(content)
   console.log(
-    `[codex-config] plugins."bitfab@bitfab-internal".enabled = ${devEnabled}`,
+    `[codex-config] plugins."bitfab@${mktName}".enabled = ${devEnabled}`,
   )
   console.log(`[codex-config] plugins."bitfab@bitfab".enabled = ${prodEnabled}`)
 }
 
+/**
+ * Mark a worktree folder as trusted so Codex runs without per-session approval
+ * prompts: the Codex analog of Claude's `permissions.defaultMode = bypassPermissions`.
+ * Worktree-scoped only; never touches the main checkout (Codex trusts it already).
+ */
+function ensureTrust(projectPath) {
+  if (!projectPath) {
+    usage()
+  }
+  let content = readConfig()
+  content = setKey(
+    content,
+    `[projects."${projectPath}"]`,
+    "trust_level",
+    quote("trusted"),
+  )
+  writeConfig(content)
+  console.log(`[codex-config] projects."${projectPath}".trust_level = trusted`)
+}
+
 if (cmd === "ensure-dev") {
-  ensureDev(arg)
+  ensureDev(arg, arg2)
 } else if (cmd === "toggle") {
-  toggle(arg)
+  toggle(arg, arg2)
+} else if (cmd === "restore-prod") {
+  restoreProd()
+} else if (cmd === "ensure-trust") {
+  ensureTrust(arg)
 } else {
   usage()
 }

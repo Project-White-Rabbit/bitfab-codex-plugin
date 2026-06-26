@@ -21,14 +21,17 @@ case "$variant" in
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CONFIG_TOML="$CODEX_HOME/config.toml"
+# Per-worktree marketplace name, matching install-dev.sh.
+MKT_NAME="bitfab-internal-$(basename "$REPO_ROOT")"
 
 if [ "$variant" = "dev" ]; then
   "$SCRIPT_DIR/install-dev.sh"
 fi
 
-node "$SCRIPT_DIR/codex-config.mjs" toggle "$CONFIG_TOML" "$variant"
+node "$SCRIPT_DIR/codex-config.mjs" toggle "$CONFIG_TOML" "$variant" "$MKT_NAME"
 
 echo
 echo "✅ Switched Bitfab Codex plugin to $variant. Restart Codex to pick it up."
