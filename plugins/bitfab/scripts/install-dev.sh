@@ -27,6 +27,9 @@ CONFIG_TOML="$CODEX_HOME/config.toml"
 
 cd "$REPO_ROOT"
 
+echo "==> Building bitfab-flow"
+(cd bitfab-flow && pnpm build)
+
 echo "==> Building bitfab-plugin-lib"
 (cd bitfab-plugin-lib && pnpm build)
 
