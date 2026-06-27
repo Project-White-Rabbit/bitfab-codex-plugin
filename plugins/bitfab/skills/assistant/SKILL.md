@@ -254,7 +254,7 @@ Check that this trace function has both instrumentation and a replay script.
    > B) **Pick a different function** → step 1 of the Phase 1: Identify the Trace Function phase
    > C) **Stop** → step 1 of the Cleanup phase
 
-   If the user chooses **"Create replay now"**, create the replay script inline: fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript.md` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk.md`), then write a new replay script following the template. The script must accept `--limit N`, `--trace-ids`, `--code-change <path>`, `--experiment-group-id <uuid>`, and `--dataset-id <uuid>` flags, and emit the full `ReplayResult` as JSON to stdout per the Replay Output Contract. Pass the SDK's ready-made progress reporter into the replay's progress callback (`onProgress: reportReplayProgress` in TS, `on_progress=report_replay_progress` in Python, `on_progress: Bitfab.method(:report_replay_progress)` in Ruby, the template already does this) so it streams `@@bitfab:progress {json}` lines that `node "${BITFAB_PLUGIN_DIR}/dist/commands/replayProgress.js"` turns into one relayable line per trace, and have the script print the full `ReplayResult` JSON to stdout (`node "${BITFAB_PLUGIN_DIR}/dist/commands/replayProgress.js"` captures that and writes `scripts/replay-result.json`). Do NOT invoke `$bitfab:setup replay` as a separate skill. After creating the script, check its capabilities.
+   If the user chooses **"Create replay now"**, create the replay script inline: fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript.md` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk.md`), then write a new replay script following the template. The script must accept `--limit N`, `--trace-ids`, `--name <name>`, `--code-change <path>`, `--experiment-group-id <uuid>`, and `--dataset-id <uuid>` flags, and emit the full `ReplayResult` as JSON to stdout per the Replay Output Contract. Pass the SDK's ready-made progress reporter into the replay's progress callback (`onProgress: reportReplayProgress` in TS, `on_progress=report_replay_progress` in Python, `on_progress: Bitfab.method(:report_replay_progress)` in Ruby, the template already does this) so it streams `@@bitfab:progress {json}` lines that `node "${BITFAB_PLUGIN_DIR}/dist/commands/replayProgress.js"` turns into one relayable line per trace, and have the script print the full `ReplayResult` JSON to stdout (`node "${BITFAB_PLUGIN_DIR}/dist/commands/replayProgress.js"` captures that and writes `scripts/replay-result.json`). Do NOT invoke `$bitfab:setup replay` as a separate skill. After creating the script, check its capabilities.
 
    **Handler-instrumented keys (no decorated root function) are replayable too.** If the key is registered via a framework handler (`get_langgraph_callback_handler("key")`, `get_openai_agent_handler("key")`, `get_claude_agent_handler("key")`, `getVercelAiMiddleware("key")`, or the TS equivalents) rather than `@span`/`withSpan`, follow the docs' "Replaying handler-instrumented functions" section: pass the handler's key plus a plain callable to `replay()` (the SDK wraps it internally), re-invoking the framework entrypoint with a freshly constructed environment (safe no-op substitutes for billing callbacks and other side-effectful wiring). On SDKs that predate explicit-key replay, wrap the callable under the same key yourself. Never report a handler-instrumented function as not replayable.
 3. **Detect replay script capabilities.** Check what the replay script supports. These flags determine how experiment results are tracked and displayed in Phase 5. **If you already ran this step for the same trace function earlier in this session, skip it and continue. Re-run if the user switched functions via "Pick a different function".**
@@ -268,6 +268,7 @@ Check that this trace function has both instrumentation and a replay script.
    | `code-change` or `code_change` | `supportsCodeChanges` | Code diffs attached to each experiment in the dashboard |
    | `experiment-group-id` or `experiment_group_id` | `supportsExperimentGroups` | Live streaming of results in Studio as replay runs |
    | `dataset-id` or `dataset_id` | `supportsDatasetId` | Durable attribution of the experiment to its dataset (shows under the dataset's experiments) |
+   | `--name` plus `name` / `name:` forwarded to `replay()` | `supportsExperimentNames` | Human-readable experiment/test-run names in the UI |
    | `traceId` or `trace_id` in the output/print section | `supportsReplayTraceIds` (re-confirmed post-replay in `check-trace-id-support`) | Verdict persistence, cross-iteration comparison, Studio experiments page |
 
    `supportsInputAdapters` is **not** a script-grep flag (the script gains an `adaptInputs` / `adapt_inputs` argument only after a signature actually drifts, in `adapt-replay-inputs`). It comes solely from the installed SDK in step 3.
@@ -278,7 +279,7 @@ Check that this trace function has both instrumentation and a replay script.
    cd <project-dir> && node "${BITFAB_PLUGIN_DIR}/dist/commands/detectCapabilities.js"
    ```
 
-   Read the `<bitfab-replay-capabilities>` block. Each line is a JSON object for one detected SDK with `language`, `workspacePath`, `current` (resolved version), `versionResolved`, `updateAvailable`, `latest`, and a `capabilities` object holding `supportsExperimentGroups`, `supportsDatasetId`, `supportsCodeChanges`, `supportsReplayTraceIds`, `supportsInputAdapters`. Pick the line whose `language` (and `workspacePath`, in a monorepo) matches the replay script's project.
+   Read the `<bitfab-replay-capabilities>` block. Each line is a JSON object for one detected SDK with `language`, `workspacePath`, `current` (resolved version), `versionResolved`, `updateAvailable`, `latest`, and a `capabilities` object holding `supportsExperimentGroups`, `supportsDatasetId`, `supportsCodeChanges`, `supportsReplayTraceIds`, `supportsInputAdapters`, `supportsExperimentNames`. Pick the line whose `language` (and `workspacePath`, in a monorepo) matches the replay script's project.
 
    - **Combine the two sources:** a flag is true only when the script forwards it (step 2) **and** that SDK's matching `capabilities.*` is true. Take `supportsInputAdapters` straight from `capabilities.supportsInputAdapters` (it has no script side).
    - `supportsReplayTraceIds` from the probe is a definitive **pre-replay** signal; the later `check-trace-id-support` step still re-confirms from the actual replay output.
@@ -297,13 +298,14 @@ Check that this trace function has both instrumentation and a replay script.
    > [if !supportsCodeChanges] **Code changes**: edits won't appear in the experiment dashboard
    > [if !supportsExperimentGroups] **Experiment groups**: no live streaming; results appear in Studio after each run
    > [if !supportsDatasetId] **Dataset attribution**: the experiment won't be durably linked to its dataset (still findable via the trace-lineage fallback; fixed by regenerating the script / upgrading the SDK)
+   > [if !supportsExperimentNames] **Experiment names**: runs will show as generated IDs instead of readable names
    > [if !supportsReplayTraceIds] **Replay trace IDs**: experiment results can't be persisted or compared across iterations (your SDK needs an upgrade)
    >
    > [if !supportsInputAdapters] **Input adapters**: replay can't recover traces when the function's signature drifts after capture (fixed by upgrading the SDK)"
 
    > A) **Upgrade the replay script**: regenerate the script with full support, then continue *(recommended)* → step 4
    > B) **Continue without**: run experiments with the current script; missing features are skipped → step 4 of the Phase 5: Iterate with Replay phase (mode `experiment` or `fix`); stop (mode `cost-optimize` or `add-trace`); step 5 of the Phase 5: Iterate with Replay phase (mode `benchmark`); step 1 of the Cleanup phase (mode `replay`); otherwise step 1 of the Phase 3: Pick a Dataset and Label Traces phase
-4. **Upgrade the SDK and replay script.** The replay script references SDK APIs (`experimentGroupId`, `codeChangeDescription`, per-item `traceId`, `adaptInputs` / `adapt_inputs`) that require a recent SDK. Upgrade the SDK first, then regenerate the script.
+4. **Upgrade the SDK and replay script.** The replay script references SDK APIs (`name`, `experimentGroupId`, `codeChangeDescription`, per-item `traceId`, `adaptInputs` / `adapt_inputs`) that require a recent SDK. Upgrade the SDK first, then regenerate the script.
 
    **1. Upgrade the SDK.** Run the capability probe to read the installed version and update status (skip if you still have its block from `detect-replay-capabilities`):
 
@@ -321,6 +323,7 @@ Check that this trace function has both instrumentation and a replay script.
    **2. Regenerate the replay script.** Locate the replay script for this trace function (found in `detect-replay-capabilities`). Fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript.md` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk.md`). Then edit the script to add the missing flags:
    - **`--code-change <path>`**: parse the JSON file, pass `codeChangeDescription` and `codeChangeFiles` to `replay()`
    - **`--experiment-group-id <uuid>`**: pass `experimentGroupId` to `replay()`
+   - **`--name <name>`**: pass `name` to `replay()` so the resulting experiment/test run has a readable title
    - **`--dataset-id <uuid>`**: pass `datasetId` to `replay()`. This is the **preferred way to replay a dataset**: passed alone (no `--trace-ids`) the server replays exactly the dataset's traces and durably attributes the experiment to the dataset. Adding this flag is what lets the replay step drop the hand-enumerated `--trace-ids` list.
    - **Replay Output Contract**: emit the full `ReplayResult` as one `JSON.stringify(result, null, 2)` block to stdout (including every item's `traceId`, `durationMs`, `tokens`, `model`). Human-readable summary goes to stderr.
    Do NOT invoke `$bitfab:setup replay` as a separate skill; edit the script inline here.
@@ -749,6 +752,7 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
    | `code-change` or `code_change` | `supportsCodeChanges` | Code diffs attached to each experiment in the dashboard |
    | `experiment-group-id` or `experiment_group_id` | `supportsExperimentGroups` | Live streaming of results in Studio as replay runs |
    | `dataset-id` or `dataset_id` | `supportsDatasetId` | Durable attribution of the experiment to its dataset (shows under the dataset's experiments) |
+   | `--name` plus `name` / `name:` forwarded to `replay()` | `supportsExperimentNames` | Human-readable experiment/test-run names in the UI |
    | `traceId` or `trace_id` in the output/print section | `supportsReplayTraceIds` (re-confirmed post-replay in `check-trace-id-support`) | Verdict persistence, cross-iteration comparison, Studio experiments page |
 
    `supportsInputAdapters` is **not** a script-grep flag (the script gains an `adaptInputs` / `adapt_inputs` argument only after a signature actually drifts, in `adapt-replay-inputs`). It comes solely from the installed SDK in step 3.
@@ -759,7 +763,7 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
    cd <project-dir> && node "${BITFAB_PLUGIN_DIR}/dist/commands/detectCapabilities.js"
    ```
 
-   Read the `<bitfab-replay-capabilities>` block. Each line is a JSON object for one detected SDK with `language`, `workspacePath`, `current` (resolved version), `versionResolved`, `updateAvailable`, `latest`, and a `capabilities` object holding `supportsExperimentGroups`, `supportsDatasetId`, `supportsCodeChanges`, `supportsReplayTraceIds`, `supportsInputAdapters`. Pick the line whose `language` (and `workspacePath`, in a monorepo) matches the replay script's project.
+   Read the `<bitfab-replay-capabilities>` block. Each line is a JSON object for one detected SDK with `language`, `workspacePath`, `current` (resolved version), `versionResolved`, `updateAvailable`, `latest`, and a `capabilities` object holding `supportsExperimentGroups`, `supportsDatasetId`, `supportsCodeChanges`, `supportsReplayTraceIds`, `supportsInputAdapters`, `supportsExperimentNames`. Pick the line whose `language` (and `workspacePath`, in a monorepo) matches the replay script's project.
 
    - **Combine the two sources:** a flag is true only when the script forwards it (step 2) **and** that SDK's matching `capabilities.*` is true. Take `supportsInputAdapters` straight from `capabilities.supportsInputAdapters` (it has no script side).
    - `supportsReplayTraceIds` from the probe is a definitive **pre-replay** signal; the later `check-trace-id-support` step still re-confirms from the actual replay output.
@@ -778,6 +782,7 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
    > [if !supportsCodeChanges] **Code changes**: edits won't appear in the experiment dashboard
    > [if !supportsExperimentGroups] **Experiment groups**: no live streaming; results appear in Studio after each run
    > [if !supportsDatasetId] **Dataset attribution**: the experiment won't be durably linked to its dataset (still findable via the trace-lineage fallback; fixed by regenerating the script / upgrading the SDK)
+   > [if !supportsExperimentNames] **Experiment names**: runs will show as generated IDs instead of readable names
    > [if !supportsReplayTraceIds] **Replay trace IDs**: experiment results can't be persisted or compared across iterations (your SDK needs an upgrade)
    >
    > [if !supportsInputAdapters] **Input adapters**: replay can't recover traces when the function's signature drifts after capture (fixed by upgrading the SDK)"
@@ -786,7 +791,7 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
    > B) **Continue without**: run experiments with the current script; missing features are skipped → step 3
 2. **Run only when mode is `wizard`, `dataset`, `experiment`, `cost-optimize`, `investigate`, `benchmark` or `fix`.**
 
-   **Upgrade the SDK and replay script.** The replay script references SDK APIs (`experimentGroupId`, `codeChangeDescription`, per-item `traceId`, `adaptInputs` / `adapt_inputs`) that require a recent SDK. Upgrade the SDK first, then regenerate the script.
+   **Upgrade the SDK and replay script.** The replay script references SDK APIs (`name`, `experimentGroupId`, `codeChangeDescription`, per-item `traceId`, `adaptInputs` / `adapt_inputs`) that require a recent SDK. Upgrade the SDK first, then regenerate the script.
 
    **1. Upgrade the SDK.** Run the capability probe to read the installed version and update status (skip if you still have its block from `detect-replay-capabilities`):
 
@@ -804,6 +809,7 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
    **2. Regenerate the replay script.** Locate the replay script for this trace function (found in `detect-replay-capabilities`). Fetch the SDK replay reference (`https://docs.bitfab.ai/reference/typescript.md` or the equivalent for the project language) and the script template (`https://docs.bitfab.ai/typescript-sdk.md`). Then edit the script to add the missing flags:
    - **`--code-change <path>`**: parse the JSON file, pass `codeChangeDescription` and `codeChangeFiles` to `replay()`
    - **`--experiment-group-id <uuid>`**: pass `experimentGroupId` to `replay()`
+   - **`--name <name>`**: pass `name` to `replay()` so the resulting experiment/test run has a readable title
    - **`--dataset-id <uuid>`**: pass `datasetId` to `replay()`. This is the **preferred way to replay a dataset**: passed alone (no `--trace-ids`) the server replays exactly the dataset's traces and durably attributes the experiment to the dataset. Adding this flag is what lets the replay step drop the hand-enumerated `--trace-ids` list.
    - **Replay Output Contract**: emit the full `ReplayResult` as one `JSON.stringify(result, null, 2)` block to stdout (including every item's `traceId`, `durationMs`, `tokens`, `model`). Human-readable summary goes to stderr.
    Do NOT invoke `$bitfab:setup replay` as a separate skill; edit the script inline here.
@@ -877,6 +883,8 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
 
    **Check the `supportsExperimentGroups` flag** (from `detect-replay-capabilities`). If true, pass `--experiment-group-id <experimentGroupId>` (from `open-experiments-before-replay`) so the test run is tagged with the group. If false, skip the flag.
 
+   **Check the `supportsExperimentNames` flag** (from `detect-replay-capabilities`). If true, pass `--name "<experimentName>"` so the resulting experiment/test run is readable in the UI. Use the one-line change description from `make-change` as `<experimentName>`; in `benchmark` mode use `Benchmark: current code baseline`. Keep it 120 characters or fewer. If false, omit `--name`; this is cosmetic and the replay still runs.
+
    **Check the `supportsDatasetId` flag** (from `detect-replay-capabilities`). When true, this is the **preferred way to replay the dataset**: pass `--dataset-id <datasetId>` (the dataset id held in working context since `pick-dataset`) and **omit `--trace-ids` entirely**. The server replays exactly the dataset's traces and durably attributes the experiment to the dataset, so it shows under the dataset's experiments even when trace lineage can't be reconstructed, and you don't have to enumerate the dataset's trace IDs by hand. Only when `supportsDatasetId` is false do you fall back to `--trace-ids <the dataset's resolved trace ids>` (attribution then relies on the derived trace-lineage join). If the script lacks `--dataset-id`, prefer upgrading it (see `upgrade-replay-script`) over the trace-ids fallback.
 
    **Run the replay through `node "${BITFAB_PLUGIN_DIR}/dist/commands/replayProgress.js"` in the background, then relay the progress lines it prints.** A foreground run blocks you for the whole replay and the user just sees "a shell is running" with no detail. `node "${BITFAB_PLUGIN_DIR}/dist/commands/replayProgress.js"` runs the replay, turns the SDK's per-trace `@@bitfab:progress` events into one self-contained line per trace on its stdout (a header, then for each trace as it settles a pass/fail glyph, the running `n/total`, and that trace's duration, with the error reason inline on failure, plus a liveness heartbeat line when a slow trace goes quiet so the run never looks frozen, then a final summary with total + average time), and writes the replay's full `ReplayResult` JSON to `scripts/replay-result.json` (`--out` to change). It also tees every line to `.bitfab/replay-progress.log` (fresh per run, `--log` to change), so the user can `tail -f` it in a separate terminal for a live view that never collapses the way a tool card does. If the replay settles no traces at all (an `@bitfab/sdk` too old to carry the progress reporter, or a script that never wired `onProgress`), it closes with a `⚠ done · replay finished but reported no progress` line instead of ending silently, so a missing stream of per-trace lines never reads as a hang, fix it via `upgrade-replay-script` (or an SDK upgrade) and re-run. You do NOT decide what or when to print: it does the formatting; you just show each new line.
@@ -886,9 +894,9 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
    ```bash
    # The exact replay command depends on the script, adapt to what exists
    # Preferred (supportsDatasetId true): --dataset-id alone replays the dataset; no --trace-ids needed
-   cd <project-dir> && node "${BITFAB_PLUGIN_DIR}/dist/commands/replayProgress.js" --label <pipeline-name> -- npx tsx scripts/replay.ts <pipeline-name> --dataset-id <datasetId> --code-change /tmp/bitfab-code-change-<experimentN>.json --experiment-group-id <experimentGroupId>
+   cd <project-dir> && node "${BITFAB_PLUGIN_DIR}/dist/commands/replayProgress.js" --label <pipeline-name> -- npx tsx scripts/replay.ts <pipeline-name> --dataset-id <datasetId> --name "<experimentName>" --code-change /tmp/bitfab-code-change-<experimentN>.json --experiment-group-id <experimentGroupId>
    # Fallback (older script/SDK without dataset-id support): pass the dataset's resolved trace IDs
-   cd <project-dir> && node "${BITFAB_PLUGIN_DIR}/dist/commands/replayProgress.js" --label <pipeline-name> -- npx tsx scripts/replay.ts <pipeline-name> --trace-ids <id1>,<id2>,<id3>,... --code-change /tmp/bitfab-code-change-<experimentN>.json --experiment-group-id <experimentGroupId>
+   cd <project-dir> && node "${BITFAB_PLUGIN_DIR}/dist/commands/replayProgress.js" --label <pipeline-name> -- npx tsx scripts/replay.ts <pipeline-name> --trace-ids <id1>,<id2>,<id3>,... --name "<experimentName>" --code-change /tmp/bitfab-code-change-<experimentN>.json --experiment-group-id <experimentGroupId>
    ```
 
    2. **Relay its output to the user as it runs.** Poll the background command's output every few seconds and **show the user each new line it prints, verbatim** (they are already formatted, one line per trace: `▶ generate-email · 20 traces`, `✓ 5/20 · 1.1s`, `✗ 7/20 · 0.3s · missing OPENAI_API_KEY`, `… 7/20 running · 24s elapsed` (a heartbeat while a slow trace runs), `⚠ done · 18 ok · 2 failed · 14.3s · avg 0.9s`). Do not parse, summarize, or re-decide cadence, just relay. Your relay is bursty (only between tool calls) and the tool card collapses; if the user wants a continuous, never-collapsing view, point them at `tail -f <project-dir>/.bitfab/replay-progress.log` in their own terminal, which shows every line the instant it is written. (If you are running this inside a parallel experiment subagent, your chat is not shown to the user, so skip relaying and just report at the end.)
