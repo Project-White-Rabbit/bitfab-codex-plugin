@@ -136,9 +136,16 @@ describe("codex-config ensure-dev (per-worktree)", () => {
     expect(fs.existsSync(deadCache)).toBe(false)
   })
 
-  it("disables a still-live sibling worktree's plugins so skills never collide", () => {
+  it("prunes a still-live sibling worktree's marketplace so skills never collide", () => {
     const sibling = fs.mkdtempSync(path.join(os.tmpdir(), "sibling-"))
+    const siblingCache = path.join(
+      codexHome,
+      "plugins",
+      "cache",
+      "bitfab-internal-wt-b",
+    )
     try {
+      fs.mkdirSync(siblingCache, { recursive: true })
       fs.writeFileSync(
         configPath,
         [
@@ -148,15 +155,17 @@ describe("codex-config ensure-dev (per-worktree)", () => {
           '[plugins."bitfab-dev@bitfab-internal-wt-b"]',
           "enabled = true",
           "",
+          '[hooks.state."bitfab@bitfab-internal-wt-b:hooks/hooks.json:session_start:0:0"]',
+          'trusted_hash = "sha256:test"',
+          "",
         ].join("\n"),
       )
       run("ensure-dev", configPath, vendor, "bitfab-internal-wt-a")
       const cfg = readConfig()
-      // sibling kept (source still exists) but disabled
-      expect(cfg).toContain("[marketplaces.bitfab-internal-wt-b]")
-      expect(cfg).toContain(
-        '[plugins."bitfab-dev@bitfab-internal-wt-b"]\nenabled = false',
-      )
+      expect(cfg).not.toContain("[marketplaces.bitfab-internal-wt-b]")
+      expect(cfg).not.toContain("bitfab-dev@bitfab-internal-wt-b")
+      expect(cfg).not.toContain("bitfab@bitfab-internal-wt-b:hooks")
+      expect(fs.existsSync(siblingCache)).toBe(false)
       // current worktree active
       expect(cfg).toContain(
         '[plugins."bitfab-dev@bitfab-internal-wt-a"]\nenabled = true',
@@ -164,6 +173,24 @@ describe("codex-config ensure-dev (per-worktree)", () => {
     } finally {
       fs.rmSync(sibling, { recursive: true, force: true })
     }
+  })
+
+  it("prunes stale internal hook state even after the marketplace block is gone", () => {
+    fs.writeFileSync(
+      configPath,
+      [
+        '[hooks.state."bitfab@bitfab-internal-wt-a:hooks/hooks.json:session_start:0:0"]',
+        'trusted_hash = "sha256:current"',
+        "",
+        '[hooks.state."bitfab@bitfab-internal-wt-b:hooks/hooks.json:session_start:0:0"]',
+        'trusted_hash = "sha256:test"',
+        "",
+      ].join("\n"),
+    )
+    run("ensure-dev", configPath, vendor, "bitfab-internal-wt-a")
+    const cfg = readConfig()
+    expect(cfg).toContain("bitfab@bitfab-internal-wt-a:hooks")
+    expect(cfg).not.toContain("bitfab-internal-wt-b")
   })
 
   it("is idempotent: a second run produces identical output", () => {

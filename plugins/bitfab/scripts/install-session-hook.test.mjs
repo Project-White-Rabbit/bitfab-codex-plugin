@@ -42,6 +42,7 @@ describe("install-session-hook", () => {
     const cmds = sessionStartCommands(read())
     expect(cmds).toHaveLength(1)
     expect(cmds[0]).toContain("scripts/setup-worktree.sh")
+    expect(cmds[0]).toContain("SUPERSET_AGENT_ID=codex")
     // self-guards: only fires inside this repo, and branches worktree vs main
     expect(cmds[0]).toContain("git rev-parse --git-common-dir")
     expect(cmds[0]).toContain("git rev-parse --git-dir")

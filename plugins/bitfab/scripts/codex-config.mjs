@@ -10,9 +10,10 @@
  * scoping, so unlike Claude we cannot have N worktree installs auto-select by
  * directory. Instead each worktree gets its own `bitfab-internal-<basename>`
  * marketplace and its own cache (builds never overwrite each other), and on
- * session start we enable ONLY the current worktree's plugins while disabling
- * every other `*@bitfab-internal-*` block (so two worktrees never expose
- * duplicate skills) and pruning marketplaces whose worktree no longer exists.
+ * session start we keep ONLY the current worktree's internal marketplace and
+ * prune every other `bitfab-internal-*` marketplace/cache. Codex can surface
+ * skills from disabled cached plugins, so disabling sibling worktrees is not
+ * enough to prevent duplicate skill names.
  *
  * Usage:
  *   codex-config.mjs ensure-dev <configPath> <vendorPath> <marketplaceName>
@@ -115,34 +116,6 @@ function setKey(content, header, key, value, opts = {}) {
   return `${lines.join("\n").replace(/\n*$/, "")}\n`
 }
 
-/** Read a single key's raw value from a section, or null. */
-function getKey(content, header, key) {
-  const lines = content.length ? content.split("\n") : []
-  const section = locateSection(lines, header)
-  if (!section) {
-    return null
-  }
-  const keyRe = new RegExp(`^\\s*${escapeRegex(key)}\\s*=\\s*(.+?)\\s*$`)
-  for (let i = section.start + 1; i < section.end; i++) {
-    const m = lines[i].match(keyRe)
-    if (m) {
-      return m[1]
-    }
-  }
-  return null
-}
-
-function unquote(value) {
-  if (value == null) {
-    return null
-  }
-  const trimmed = value.trim()
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return trimmed.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\")
-  }
-  return trimmed
-}
-
 function quote(s) {
   return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
 }
@@ -167,6 +140,30 @@ function removeSection(content, header) {
   return lines.length ? `${lines.join("\n")}\n` : ""
 }
 
+function removeSectionsMatching(content, shouldRemove) {
+  if (!content.length) {
+    return content
+  }
+  const lines = content.split("\n")
+  const kept = []
+  for (let i = 0; i < lines.length; ) {
+    const line = lines[i]
+    if (/^\s*\[.+\]\s*$/.test(line) && shouldRemove(line.trim())) {
+      i++
+      while (i < lines.length && !/^\s*\[.+\]\s*$/.test(lines[i])) {
+        i++
+      }
+      continue
+    }
+    kept.push(line)
+    i++
+  }
+  while (kept.length && kept[kept.length - 1].trim() === "") {
+    kept.pop()
+  }
+  return kept.length ? `${kept.join("\n")}\n` : ""
+}
+
 /**
  * Every internal dev marketplace name currently in the config: `bitfab-internal`
  * (legacy singleton) plus any `bitfab-internal-<basename>` per-worktree name.
@@ -176,6 +173,19 @@ function listInternalMarketplaces(content) {
   const names = new Set()
   for (const line of content.split("\n")) {
     const m = line.match(/^\[marketplaces\.(bitfab-internal(?:-.+)?)\]\s*$/)
+    if (m) {
+      names.add(m[1])
+    }
+  }
+  return [...names]
+}
+
+function listInternalHookStateMarketplaces(content) {
+  const names = new Set()
+  for (const line of content.split("\n")) {
+    const m = line.match(
+      /^\[hooks\.state\."(?:bitfab|bitfab-dev)@(bitfab-internal(?:-[^:"]+)?):/,
+    )
     if (m) {
       names.add(m[1])
     }
@@ -194,6 +204,10 @@ function dropMarketplace(content, mktName) {
   let next = removeSection(content, `[marketplaces.${mktName}]`)
   next = removeSection(next, `[plugins."bitfab@${mktName}"]`)
   next = removeSection(next, `[plugins."bitfab-dev@${mktName}"]`)
+  const hookStateRe = new RegExp(
+    `^\\[hooks\\.state\\."(?:bitfab|bitfab-dev)@${escapeRegex(mktName)}:`,
+  )
+  next = removeSectionsMatching(next, (header) => hookStateRe.test(header))
   fs.rmSync(cacheDirFor(mktName), { recursive: true, force: true })
   return next
 }
@@ -215,35 +229,22 @@ function ensureDev(vendorPath, mktName) {
     content = dropMarketplace(content, "bitfab-internal")
   }
 
-  // 2. Prune per-worktree marketplaces whose source dir is gone (worktree
-  //    deleted). Never prune the one we're about to (re)write.
-  for (const name of listInternalMarketplaces(content)) {
+  // 2. Prune every other per-worktree marketplace. Codex can still index skills
+  //    from disabled cached plugins, so stale sibling caches must disappear.
+  //    Never prune the one we're about to (re)write.
+  const staleNames = new Set([
+    ...listInternalMarketplaces(content),
+    ...listInternalHookStateMarketplaces(content),
+  ])
+  for (const name of staleNames) {
     if (name === mktName) {
       continue
     }
-    const src = unquote(getKey(content, `[marketplaces.${name}]`, "source"))
-    if (src && !fs.existsSync(src)) {
-      content = dropMarketplace(content, name)
-      console.log(`[codex-config] pruned orphaned marketplace ${name}`)
-    }
+    content = dropMarketplace(content, name)
+    console.log(`[codex-config] pruned sibling marketplace ${name}`)
   }
 
-  // 3. Disable every other worktree's plugins so only the current worktree
-  //    exposes its skills (Codex would otherwise load duplicates from two
-  //    enabled same-named plugins).
-  for (const name of listInternalMarketplaces(content)) {
-    if (name === mktName) {
-      continue
-    }
-    for (const plugin of ["bitfab", "bitfab-dev"]) {
-      const header = `[plugins."${plugin}@${name}"]`
-      if (locateSection(content.split("\n"), header)) {
-        content = setKey(content, header, "enabled", "false")
-      }
-    }
-  }
-
-  // 4. Register the current worktree's marketplace + plugins.
+  // 3. Register the current worktree's marketplace + plugins.
   content = setKey(
     content,
     `[marketplaces.${mktName}]`,

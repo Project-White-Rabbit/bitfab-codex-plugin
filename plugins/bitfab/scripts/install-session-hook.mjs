@@ -39,7 +39,7 @@ const COMMAND = [
   'R="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0; ',
   '[ -f "$R/scripts/setup-worktree.sh" ] || exit 0; ',
   'if [ "$(git rev-parse --git-common-dir 2>/dev/null)" != "$(git rev-parse --git-dir 2>/dev/null)" ]; ',
-  'then exec bash "$R/scripts/setup-worktree.sh" "$R"; ',
+  'then exec env SUPERSET_AGENT_ID=codex bash "$R/scripts/setup-worktree.sh" "$R"; ',
   // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameter expansion inside a single-quoted sh command, not a JS template literal
   'else exec node "$R/bitfab-codex-plugin/scripts/codex-config.mjs" restore-prod "${CODEX_HOME:-$HOME/.codex}/config.toml"; fi',
   "'",
