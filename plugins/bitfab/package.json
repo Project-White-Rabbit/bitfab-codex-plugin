@@ -1,6 +1,6 @@
 {
   "name": "bitfab-codex-plugin",
-  "version": "0.8.77",
+  "version": "0.8.78",
   "description": "Automated regression testing and improvements for your prompts, context, and tool calls.",
   "type": "module",
   "scripts": {
@@ -12,7 +12,7 @@
     "tsc": "tsc --noEmit",
     "knip": "knip",
     "madge": "madge --ts-config ./tsconfig.json --extensions ts --circular ./src",
-    "validate": "pnpm lint && pnpm tsc && pnpm knip && pnpm madge"
+    "validate": "pnpm lint && pnpm tsc && pnpm knip && pnpm madge && node ../scripts/check-bitfab-plugin-command-surface.mjs"
   },
   "keywords": [
     "codex",
