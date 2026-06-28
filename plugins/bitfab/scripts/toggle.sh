@@ -24,8 +24,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 CONFIG_TOML="$CODEX_HOME/config.toml"
-# Per-worktree marketplace name, matching install-dev.sh.
-MKT_NAME="bitfab-internal-$(basename "$REPO_ROOT")"
+# Stable internal marketplace name, matching install-dev.sh.
+MKT_NAME="bitfab-internal"
 
 if [ "$variant" = "dev" ]; then
   "$SCRIPT_DIR/install-dev.sh"

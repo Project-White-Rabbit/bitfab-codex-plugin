@@ -3,11 +3,13 @@ import {
   runCaptureHook,
   runSessionStart,
 } from "bitfab-plugin-lib"
+import { recordCodexSessionRuntime } from "../codexSessionRuntime.js"
 import { platform } from "../platform.js"
 import { PLUGIN_ROOT } from "../pluginRoot.js"
 import { getVersion } from "../version.js"
 
 const input = readHookStdin()
+recordCodexSessionRuntime(input)
 
 await Promise.all([
   runSessionStart(

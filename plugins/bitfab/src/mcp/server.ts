@@ -1,72 +1,123 @@
-import fs from "node:fs"
-import os from "node:os"
+import { spawn } from "node:child_process"
 import path from "node:path"
 import { getConfig, startMcpServer } from "bitfab-plugin-lib"
+import {
+  resolveCodexSessionRuntime,
+  runtimeServerPath,
+} from "../codexSessionRuntime.js"
 import { platform } from "../platform.js"
+import { PLUGIN_ROOT } from "../pluginRoot.js"
 import { getVersion } from "../version.js"
 
-function getCodexSessionCwd(): string | null {
-  const logPath = process.env.CODEX_TUI_SESSION_LOG_PATH
-  if (!logPath) {
-    return null
-  }
-  try {
-    const content = fs.readFileSync(logPath, "utf-8")
-    const newlineIndex = content.indexOf("\n")
-    const firstLine =
-      newlineIndex === -1 ? content : content.slice(0, newlineIndex)
-    const parsed = JSON.parse(firstLine) as { cwd?: unknown }
-    return typeof parsed.cwd === "string" && fs.existsSync(parsed.cwd)
-      ? parsed.cwd
-      : null
-  } catch {
-    return null
-  }
+const RUNTIME_WAIT_MS = 5_000
+const RUNTIME_POLL_MS = 100
+
+function hasCodexSessionId() {
+  return Boolean(process.env.CODEX_THREAD_ID || process.env.AGENT_SESSION_ID)
 }
 
-function getCodexDevMarketplaceCwd(): string | null {
-  const cwd = process.cwd()
-  const parts = cwd.split(path.sep)
-  const cacheIndex = parts.lastIndexOf("cache")
-  const marketplaceName = cacheIndex === -1 ? null : parts[cacheIndex + 1]
-  if (!marketplaceName?.startsWith("bitfab-internal-")) {
-    return null
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function resolveRuntimeForMcp() {
+  let runtime = resolveCodexSessionRuntime()
+  if (runtime || !hasCodexSessionId()) {
+    return runtime
   }
 
-  const configPath = path.join(
-    process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"),
-    "config.toml",
-  )
-  try {
-    const content = fs.readFileSync(configPath, "utf-8")
-    const sectionHeader = `[marketplaces.${marketplaceName}]`
-    const lines = content.split("\n")
-    const start = lines.findIndex((line) => line.trim() === sectionHeader)
-    if (start === -1) {
-      return null
+  const deadline = Date.now() + RUNTIME_WAIT_MS
+  while (Date.now() < deadline) {
+    await sleep(RUNTIME_POLL_MS)
+    runtime = resolveCodexSessionRuntime()
+    if (runtime) {
+      return runtime
     }
-    for (let i = start + 1; i < lines.length; i++) {
-      const line = lines[i].trim()
-      if (line.startsWith("[") && line.endsWith("]")) {
-        break
-      }
-      const match = line.match(/^source\s*=\s*"(.+)"$/)
-      if (match) {
-        const source = match[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\")
-        const projectRoot = path.dirname(path.dirname(source))
-        return fs.existsSync(projectRoot) ? projectRoot : null
-      }
-    }
-  } catch {}
+  }
+
   return null
 }
 
-const sessionCwd = getCodexSessionCwd() ?? getCodexDevMarketplaceCwd()
-if (sessionCwd) {
-  process.chdir(sessionCwd)
+async function delegateToSessionRuntime(): Promise<boolean> {
+  if (process.env.BITFAB_CODEX_RUNTIME_DELEGATED === "1") {
+    return false
+  }
+
+  const runtime = await resolveRuntimeForMcp()
+  if (!runtime) {
+    return false
+  }
+
+  process.chdir(runtime.worktree)
+
+  const serverPath = runtimeServerPath(runtime)
+  if (!serverPath) {
+    return false
+  }
+
+  const bundledServerPath = path.join(PLUGIN_ROOT, "dist", "mcp", "server.js")
+  if (path.resolve(serverPath) === path.resolve(bundledServerPath)) {
+    return false
+  }
+
+  const child = spawn(process.execPath, [serverPath], {
+    cwd: runtime.worktree,
+    env: {
+      ...process.env,
+      BITFAB_CODEX_RUNTIME_DELEGATED: "1",
+      BITFAB_CODEX_SHIM_ROOT: PLUGIN_ROOT,
+    },
+    stdio: "inherit",
+  })
+
+  const delegated = await new Promise<boolean>((resolve) => {
+    let settled = false
+    child.once("error", (err) => {
+      if (settled) {
+        return
+      }
+      settled = true
+      console.error("Bitfab MCP runtime delegation failed:", err)
+      resolve(false)
+    })
+    child.once("exit", (code, signal) => {
+      if (settled) {
+        return
+      }
+      settled = true
+      if (signal) {
+        process.kill(process.pid, signal)
+        return
+      }
+      if (code === 0) {
+        process.exit(0)
+      }
+      console.error(
+        `Bitfab MCP runtime delegation exited with code ${code ?? "unknown"}`,
+      )
+      resolve(false)
+    })
+  })
+  return delegated
 }
 
-startMcpServer(platform, getConfig, getVersion()).catch((err) => {
-  console.error("Bitfab MCP server failed to start:", err)
-  process.exit(1)
-})
+async function startBundledMcpServer() {
+  const runtime = await resolveRuntimeForMcp()
+  if (runtime) {
+    process.chdir(runtime.worktree)
+  }
+
+  startMcpServer(platform, getConfig, getVersion()).catch((err) => {
+    console.error("Bitfab MCP server failed to start:", err)
+    process.exit(1)
+  })
+}
+
+try {
+  if (!(await delegateToSessionRuntime())) {
+    await startBundledMcpServer()
+  }
+} catch (err) {
+  console.error("Bitfab MCP runtime delegation failed:", err)
+  await startBundledMcpServer()
+}

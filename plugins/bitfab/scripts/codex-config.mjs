@@ -6,14 +6,12 @@
  * skills need to rewrite TOML in place. We use regex-based surgical edits
  * rather than a full TOML parser.
  *
- * Per-worktree isolation: Codex's config.toml is global with no project
- * scoping, so unlike Claude we cannot have N worktree installs auto-select by
- * directory. Instead each worktree gets its own `bitfab-internal-<basename>`
- * marketplace and its own cache (builds never overwrite each other), and on
- * session start we keep ONLY the current worktree's internal marketplace and
- * prune every other `bitfab-internal-*` marketplace/cache. Codex can surface
- * skills from disabled cached plugins, so disabling sibling worktrees is not
- * enough to prevent duplicate skill names.
+ * Worktree isolation: Codex's config.toml is global with no project scoping,
+ * so we register one stable `bitfab-internal` shim marketplace and route that
+ * shim through a session-scoped worktree runtime map. Session start keeps the
+ * stable marketplace enabled and prunes old per-worktree `bitfab-internal-*`
+ * config entries. We leave sibling caches on disk because concurrently running
+ * Codex sessions may still hold in-memory skill metadata that points at them.
  *
  * Usage:
  *   codex-config.mjs ensure-dev <configPath> <vendorPath> <marketplaceName>
@@ -165,9 +163,9 @@ function removeSectionsMatching(content, shouldRemove) {
 }
 
 /**
- * Every internal dev marketplace name currently in the config: `bitfab-internal`
- * (legacy singleton) plus any `bitfab-internal-<basename>` per-worktree name.
- * The prod `bitfab` marketplace is deliberately excluded.
+ * Every internal dev marketplace name currently in the config: the stable
+ * `bitfab-internal` shim plus old `bitfab-internal-<basename>` per-worktree
+ * names. The prod `bitfab` marketplace is deliberately excluded.
  */
 function listInternalMarketplaces(content) {
   const names = new Set()
@@ -193,22 +191,30 @@ function listInternalHookStateMarketplaces(content) {
   return [...names]
 }
 
-/** Cache dir Codex keeps for a given internal marketplace. */
-function cacheDirFor(mktName) {
-  const codexHome = path.dirname(path.resolve(configPath))
-  return path.join(codexHome, "plugins", "cache", mktName)
+function listInternalPluginMarketplaces(content) {
+  const names = new Set()
+  for (const line of content.split("\n")) {
+    const m = line.match(
+      /^\[plugins\."(?:bitfab|bitfab-dev)@(bitfab-internal(?:-[^"]+)?)"(?:\.|\])/,
+    )
+    if (m) {
+      names.add(m[1])
+    }
+  }
+  return [...names]
 }
 
-/** Remove a marketplace, its bitfab/bitfab-dev plugin blocks, and its cache. */
+/** Remove a marketplace and its bitfab/bitfab-dev plugin config. */
 function dropMarketplace(content, mktName) {
   let next = removeSection(content, `[marketplaces.${mktName}]`)
-  next = removeSection(next, `[plugins."bitfab@${mktName}"]`)
-  next = removeSection(next, `[plugins."bitfab-dev@${mktName}"]`)
+  const pluginRe = new RegExp(
+    `^\\[plugins\\."(?:bitfab|bitfab-dev)@${escapeRegex(mktName)}"(?:\\.|\\])`,
+  )
+  next = removeSectionsMatching(next, (header) => pluginRe.test(header))
   const hookStateRe = new RegExp(
     `^\\[hooks\\.state\\."(?:bitfab|bitfab-dev)@${escapeRegex(mktName)}:`,
   )
   next = removeSectionsMatching(next, (header) => hookStateRe.test(header))
-  fs.rmSync(cacheDirFor(mktName), { recursive: true, force: true })
   return next
 }
 
@@ -219,21 +225,21 @@ function ensureDev(vendorPath, mktName) {
   const absVendor = path.resolve(vendorPath)
   let content = readConfig()
 
-  // 1. Migrate legacy names (idempotent): the old `bitfab-dev` marketplace and
-  //    the pre-per-worktree singleton `bitfab-internal`. dropMarketplace clears
-  //    each one's marketplace block, BOTH its bitfab@ and bitfab-dev@ plugin
-  //    blocks, and its cache -- so no plugin entry is left pointing at a
-  //    marketplace that no longer exists.
+  // 1. Migrate the legacy `bitfab-dev` marketplace. If callers still use an
+  //    old per-worktree marketplace name, also remove the singleton
+  //    `bitfab-internal`; the stable shim path passes `bitfab-internal` and
+  //    preserves it.
   content = dropMarketplace(content, "bitfab-dev")
   if (mktName !== "bitfab-internal") {
     content = dropMarketplace(content, "bitfab-internal")
   }
 
-  // 2. Prune every other per-worktree marketplace. Codex can still index skills
-  //    from disabled cached plugins, so stale sibling caches must disappear.
-  //    Never prune the one we're about to (re)write.
+  // 2. Prune old per-worktree marketplaces from config. Do not delete sibling
+  //    caches here: a concurrently running Codex session may still hold
+  //    in-memory skill metadata pointing at that cache.
   const staleNames = new Set([
     ...listInternalMarketplaces(content),
+    ...listInternalPluginMarketplaces(content),
     ...listInternalHookStateMarketplaces(content),
   ])
   for (const name of staleNames) {
@@ -244,7 +250,7 @@ function ensureDev(vendorPath, mktName) {
     console.log(`[codex-config] pruned sibling marketplace ${name}`)
   }
 
-  // 3. Register the current worktree's marketplace + plugins.
+  // 3. Register the stable shim marketplace + plugins.
   content = setKey(
     content,
     `[marketplaces.${mktName}]`,
@@ -257,11 +263,11 @@ function ensureDev(vendorPath, mktName) {
     "source",
     quote(absVendor),
   )
-  // A worktree must run the dev plugins, not prod (mirrors the Claude sidecar
-  // seeding): enable this worktree's bitfab + bitfab-dev and disable the prod
-  // bitfab marketplace. Codex's config is global, so this flips prod off for
-  // every session until a main-repo session calls `restore-prod` (see the
-  // SessionStart hook). The dev/prod `toggle` command can still override.
+  // A worktree must run the dev shim, not prod: enable bitfab + bitfab-dev on
+  // the stable internal marketplace and disable the prod bitfab marketplace.
+  // Codex's config is global, so this flips prod off for every session until a
+  // main-repo session calls `restore-prod` (see the SessionStart hook). The
+  // dev/prod `toggle` command can still override.
   content = setKey(content, `[plugins."bitfab@${mktName}"]`, "enabled", "true")
   // Enable bitfab-dev only if it was actually vendored into this marketplace.
   // install-dev.sh skips vendoring bitfab-dev when bitfab-dev-codex-plugin isn't

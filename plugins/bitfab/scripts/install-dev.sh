@@ -16,11 +16,9 @@ REPO_ROOT="$(cd "$PLUGIN_DIR/.." && pwd)"
 
 VENDOR_DIR="$PLUGIN_DIR/tmp"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-# Per-worktree marketplace name, mirroring the Claude sidecar
-# (`bitfab-internal-<basename>`). Each worktree gets its own marketplace + cache
-# so builds never overwrite each other; codex-config.mjs disables other
-# worktrees' plugins so only this one's skills are exposed at a time.
-MKT_NAME="bitfab-internal-$(basename "$REPO_ROOT")"
+# Stable internal marketplace. Worktree-specific code stays in the worktree and
+# is selected through the session runtime map; Codex only discovers this shim.
+MKT_NAME="bitfab-internal"
 CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab/local"
 DEV_CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab-dev/local"
 CONFIG_TOML="$CODEX_HOME/config.toml"
@@ -42,27 +40,37 @@ mkdir -p "$VENDOR_DIR"
 scripts/vendor-bitfab-plugin.sh \
   bitfab-codex-plugin .codex-plugin "$VENDOR_DIR" plugins/bitfab "$MKT_NAME"
 
+echo "==> Replacing bitfab skills with session-routed shims"
+node "$SCRIPT_DIR/build-skill-shims.mjs" \
+  "$REPO_ROOT/bitfab-codex-plugin/skills" \
+  "$VENDOR_DIR/plugins/bitfab/skills" \
+  bitfabRuntime
+
 # Hoisted node_modules — Codex's copy routine drops symlinks, which would
 # strip zod and @modelcontextprotocol/sdk from an isolated pnpm layout.
 (cd "$VENDOR_DIR/plugins/bitfab" \
   && pnpm install --prod --ignore-workspace --config.node-linker=hoisted)
 
 echo "==> Installing into $CACHE_DIR"
-rm -rf "$CACHE_DIR"
-mkdir -p "$(dirname "$CACHE_DIR")"
-cp -R "$VENDOR_DIR/plugins/bitfab" "$CACHE_DIR"
+mkdir -p "$CACHE_DIR"
+rsync -a --delete "$VENDOR_DIR/plugins/bitfab/" "$CACHE_DIR/"
 
 # bitfab-dev: the internal dev-workflow plugin (sync/ready/merge/close/...).
 # Skills-only and script-driven (its skills shell out to repo-relative
 # bitfab-internal/bitfab-dev/scripts/*), so there is no node_modules to vendor
-# and no MCP server. It rides in the same per-worktree marketplace as the
-# bitfab plugin, mirroring the Claude sidecar that wraps both.
+# and no MCP server. It rides in the same stable shim marketplace as the bitfab
+# plugin; the installed skill files route to the current session's worktree.
 echo "==> Vendoring bitfab-dev into $VENDOR_DIR/plugins/bitfab-dev"
 DEV_PLUGIN_SRC="$REPO_ROOT/bitfab-dev-codex-plugin"
 if [ -d "$DEV_PLUGIN_SRC/skills" ] && [ -f "$DEV_PLUGIN_SRC/.codex-plugin/plugin.json" ]; then
   rm -rf "$VENDOR_DIR/plugins/bitfab-dev"
   mkdir -p "$VENDOR_DIR/plugins/bitfab-dev"
   rsync -a --exclude node_modules "$DEV_PLUGIN_SRC/" "$VENDOR_DIR/plugins/bitfab-dev/"
+  echo "==> Replacing bitfab-dev skills with session-routed shims"
+  node "$SCRIPT_DIR/build-skill-shims.mjs" \
+    "$DEV_PLUGIN_SRC/skills" \
+    "$VENDOR_DIR/plugins/bitfab-dev/skills" \
+    bitfabDevRuntime
 
   echo "==> Adding bitfab-dev to $VENDOR_DIR/.agents/plugins/marketplace.json"
   node -e "
@@ -80,9 +88,8 @@ if [ -d "$DEV_PLUGIN_SRC/skills" ] && [ -f "$DEV_PLUGIN_SRC/.codex-plugin/plugin
   "
 
   echo "==> Installing bitfab-dev into $DEV_CACHE_DIR"
-  rm -rf "$DEV_CACHE_DIR"
-  mkdir -p "$(dirname "$DEV_CACHE_DIR")"
-  cp -R "$VENDOR_DIR/plugins/bitfab-dev" "$DEV_CACHE_DIR"
+  mkdir -p "$DEV_CACHE_DIR"
+  rsync -a --delete "$VENDOR_DIR/plugins/bitfab-dev/" "$DEV_CACHE_DIR/"
 else
   echo "==> Skipping bitfab-dev (bitfab-dev-codex-plugin not built; run bitfab-plugin-lib build first)" >&2
 fi
