@@ -19,6 +19,7 @@ CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 # Stable internal marketplace. Worktree-specific code stays in the worktree and
 # is selected through the session runtime map; Codex only discovers this shim.
 MKT_NAME="bitfab-internal"
+STABLE_VENDOR_DIR="$CODEX_HOME/bitfab/internal-marketplace"
 CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab/local"
 DEV_CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab-dev/local"
 CONFIG_TOML="$CODEX_HOME/config.toml"
@@ -94,8 +95,12 @@ else
   echo "==> Skipping bitfab-dev (bitfab-dev-codex-plugin not built; run bitfab-plugin-lib build first)" >&2
 fi
 
+echo "==> Publishing stable marketplace source to $STABLE_VENDOR_DIR"
+mkdir -p "$STABLE_VENDOR_DIR"
+rsync -a --delete "$VENDOR_DIR/" "$STABLE_VENDOR_DIR/"
+
 echo "==> Ensuring marketplaces.$MKT_NAME block in $CONFIG_TOML"
-node "$SCRIPT_DIR/codex-config.mjs" ensure-dev "$CONFIG_TOML" "$VENDOR_DIR" "$MKT_NAME"
+node "$SCRIPT_DIR/codex-config.mjs" ensure-dev "$CONFIG_TOML" "$STABLE_VENDOR_DIR" "$MKT_NAME"
 
 # Wire the SessionStart auto-trigger so future Codex sessions in any worktree of
 # this repo re-run setup-worktree.sh (Claude gets this from .claude/settings.json;
