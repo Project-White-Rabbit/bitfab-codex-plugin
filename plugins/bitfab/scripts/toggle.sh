@@ -3,8 +3,8 @@
 # Switch the active Bitfab Codex plugin variant between dev and prod.
 #
 # Usage:
-#   toggle.sh dev   — build + install dev, flip enabled flags in config.toml
-#   toggle.sh prod  — flip enabled flags back to prod marketplace
+#   toggle.sh dev - build + install dev, flip enabled flags in config.toml
+#   toggle.sh prod - flip enabled flags back to prod marketplace
 #
 # Prod assumes the bitfab marketplace is already registered
 # (`codex plugin marketplace add Project-White-Rabbit/bitfab-codex-plugin`).

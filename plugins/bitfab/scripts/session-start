@@ -3,13 +3,13 @@
 # banners to stdout (Codex forwards them as "extra developer context").
 #
 # Invoked two ways:
-#   1. If Codex auto-discovers the plugin-shipped hooks.json (speculative —
+#   1. If Codex auto-discovers the plugin-shipped hooks.json (speculative -
 #      undocumented as of Apr 2026), the hook fires at session start with
 #      $0 pointing into the installed plugin cache. The self-resolver
 #      below picks up the real root from $0's directory.
 #   2. If the user wires it manually in `~/.codex/hooks.json`, they point
 #      `command` at a find-based resolver that ultimately exec's this
-#      script — same self-resolver path.
+#      script - same self-resolver path.
 
 set -eu
 
@@ -23,7 +23,7 @@ NODE_CMD="node"
 if [ -n "${NODE_BIN:-}" ] && [ -x "${NODE_BIN}" ]; then
   NODE_CMD="${NODE_BIN}"
 elif ! command -v node >/dev/null 2>&1; then
-  # No node available — silently no-op rather than break session start.
+  # No node available - silently no-op rather than break session start.
   exit 0
 fi
 

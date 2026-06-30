@@ -1,6 +1,6 @@
 # Bitfab Codex Plugin
 
-Bitfab LLM evaluation tools for [OpenAI Codex CLI](https://github.com/openai/codex) — trace inspection, grader management, and SDK setup via MCP, plus `bitfab-setup` and `bitfab-assistant` skills.
+Bitfab LLM evaluation tools for [OpenAI Codex CLI](https://github.com/openai/codex) - trace inspection, grader management, and SDK setup via MCP, plus `bitfab-setup` and `bitfab-assistant` skills.
 
 **Requires Codex CLI `rust-v0.121.0` or later.**
 
@@ -31,7 +31,7 @@ codex plugin marketplace remove bitfab
 
 ### Authenticate
 
-Inside Codex, run the `bitfab-setup` skill — handles the browser OAuth flow and stores the API key at `~/.config/bitfab/credentials.json`.
+Inside Codex, run the `bitfab-setup` skill - handles the browser OAuth flow and stores the API key at `~/.config/bitfab/credentials.json`.
 
 ## Architecture
 
@@ -40,7 +40,7 @@ This monorepo houses the dev source. The public repo (`Project-White-Rabbit/bitf
 1. Build `bitfab-plugin-lib` + this plugin.
 2. Run `scripts/vendor-bitfab-plugin.sh bitfab-codex-plugin .codex-plugin _target plugins/bitfab`, which:
    - Copies plugin files to `_target/plugins/bitfab/`
-   - Inlines `bitfab-plugin-lib/dist` into `_target/plugins/bitfab/node_modules/bitfab-plugin-lib/` (no workspace symlinks — Codex's `copy_dir_recursive` would drop them)
+   - Inlines `bitfab-plugin-lib/dist` into `_target/plugins/bitfab/node_modules/bitfab-plugin-lib/` (no workspace symlinks - Codex's `copy_dir_recursive` would drop them)
    - Emits `_target/.agents/plugins/marketplace.json` pointing at `./plugins/bitfab` (Codex rejects root-level marketplace sources)
    - Hoists `bitfab-plugin-lib`'s runtime deps into the vendored plugin's `package.json`
 3. `pnpm install --prod --ignore-workspace` in the vendored plugin dir.

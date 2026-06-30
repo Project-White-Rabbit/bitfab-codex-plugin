@@ -5,7 +5,7 @@
 # Mirrors the vendor + install steps CI runs, then idempotently registers
 # the local marketplace in ~/.codex/config.toml. Safe to re-run.
 #
-# This does NOT toggle the enabled state between dev and prod — use
+# This does NOT toggle the enabled state between dev and prod - use
 # toggle.sh for that.
 
 set -euo pipefail
@@ -46,7 +46,7 @@ node "$SCRIPT_DIR/build-skill-shims.mjs" \
   "$VENDOR_DIR/plugins/bitfab/skills" \
   bitfabRuntime
 
-# Hoisted node_modules — Codex's copy routine drops symlinks, which would
+# Hoisted node_modules - Codex's copy routine drops symlinks, which would
 # strip zod and @modelcontextprotocol/sdk from an isolated pnpm layout.
 (cd "$VENDOR_DIR/plugins/bitfab" \
   && pnpm install --prod --ignore-workspace --config.node-linker=hoisted)
