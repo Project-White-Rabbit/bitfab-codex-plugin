@@ -361,16 +361,42 @@ Bitfab captures every AI function call, inputs, outputs, and errors, so you can 
    **Generate the trace by driving the instrumented path, not by instrumenting a new one.** If the convenient local entrypoint (a dev CLI, script, or REPL) bypasses the wrapped root and calls the inner function directly, common when prod runs behind an orchestrator (Temporal, a job/queue worker), its trace won't match production. Say so, then steer to driving the real path or rerouting the harness through the wrapped entrypoint, never add a span to a dev/test-only entrypoint just to make its trace look right.
 15. **MANDATORY STOP, never silently end the cycle without the A/B/C/D prompt.** Ask the user (we recommend **A**: get a real trace flowing before instrumenting the next workflow):
 
-   > A) **Wait for the first trace [current workflow]**: you run the app (or let me); I watch for the trace to land and report it *(recommended)* → step 10
+   > A) **Wait for the first trace [current workflow]**: you run the app (or let me); I watch for the trace to land and report it *(recommended)* → step 16
    > B) **Instrument [next workflow]**: [why it's the next highest value] → step 10
    > C) **Instrument [other workflow]**: [alternative] → step 10
    > D) **Done instrumenting**: stop adding workflows; continue to replay verification, or finish if you ran Instrument on its own → step 1 of the Replay phase (mode `wizard`); otherwise step 1 of the Cleanup phase
 
-   **For option A**, restate the run command from step 14 so they can run it (or let you run it for them). Before starting the wait, tell the user verbatim: `Run your app now to produce a trace (or tell me to run it for you). I'll watch and report the first trace when it lands, up to ~10 min. Press Esc to cancel.` Then run in a shell (allow up to ~11 min): `node "${BITFAB_PLUGIN_DIR}/dist/commands/waitForTrace.js" <trace-function-key>`. The command blocks inside Node, polling Bitfab every 10s until a trace lands or the ~10 min timeout fires, so no agent tokens are burned while waiting. When it exits, parse the final stdout line as JSON: `{"status":"found","traceId":"…","url":"…"}` → report the trace URL; `{"status":"timeout",…}` → note that no trace arrived yet; `{"status":"interrupted",…}` → the user cancelled.
+   **For option A**, go to step 16 and watch for a trace before asking whether to try replay.
 
-   A, B, and C all return to step 10 for the selected workflow. Only D exits the Instrument loop. **If the next workflow the user wants isn't already in the discovered list** (common when the first cycle came from the point-to-it path, where step 9 only read the one named location), first run another discovery pass, scan via step 8 or read another named location via step 9, then present. Never tell the user there's nothing left to instrument just because the targeted read only surfaced one workflow.
+   B and C return to step 10 for the selected workflow. A returns there after the trace/replay follow-up prompts unless the user chooses to be done. Only D exits the Instrument loop. **If the next workflow the user wants isn't already in the discovered list** (common when the first cycle came from the point-to-it path, where step 9 only read the one named location), first run another discovery pass, scan via step 8 or read another named location via step 9, then present. Never tell the user there's nothing left to instrument just because the targeted read only surfaced one workflow.
 
    **After D in `wizard` mode, Replay ALWAYS runs** as a coverage-verification/backfill sweep. Step 13 already wrote a replay pipeline for every trace function instrumented in this session, so Replay is usually a no-op that confirms coverage; it still runs to catch any pre-existing trace function keys that don't yet have a pipeline and to verify Replay Output Contract compliance across all pipelines. Replay does not depend on traces existing, replay scripts are built from trace function keys in the instrumented code, not captured trace data. In `instrument` mode, D stops after the Instrument loop.
+16. Restate the run command from step 14 so the user can run it (or let you run it for them). Before starting the wait, tell the user verbatim: `Run your app now to produce a trace (or tell me to run it for you). I'll watch and report the first trace when it lands, up to ~10 min. Press Esc to cancel.` Then run in a shell (allow up to ~11 min):
+
+   ```bash
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/waitForTrace.js" <trace-function-key>
+   ```
+
+   The command blocks inside Node, polling Bitfab every 10s until a trace lands or the ~10 min timeout fires, so no agent tokens are burned while waiting. When it exits, parse the final stdout line as JSON:
+
+   - **`{"status":"found","traceId":"...","url":"..."}`**: report the trace URL and preserve the returned traceId for the replay prompt → step 17
+   - **`{"status":"timeout",...}`**: note that no trace arrived yet, then return to workflow selection → step 10
+   - **`{"status":"interrupted",...}`**: note that the user cancelled, then return to workflow selection → step 10
+17. After reporting the first trace URL, ask the user whether to try the replay script against that exact trace now. Recommend **A** for non-Go projects because this validates the replay pipeline while the user still has the workflow fresh.
+
+   > A) **Try replay now**: run the generated replay script against the trace that just landed *(recommended)* → step 18
+   > B) **Keep instrumenting**: skip replay for now and pick the next workflow → step 10
+   > C) **Done instrumenting**: stop adding workflows; continue to replay verification, or finish if you ran Instrument on its own → step 1 of the Replay phase (mode `wizard`); otherwise step 1 of the Cleanup phase
+
+   For option A, run only the current workflow's generated replay command from step 14, adding `--trace-ids <traceId>` with the trace id from step 16. If the project is Go-only and no replay command was generated, say Go has no replay support and choose option B or C instead.
+18. Run the exact replay command generated in step 14 for the current workflow, adding `--trace-ids <traceId>` for the trace id returned by step 16. Keep the command's normal env loader (for example `pnpm with-env`, `dotenv run`, or the project's equivalent). Do not substitute mocks or a different entrypoint.
+
+   If the replay exits 0, summarize the test run URL and whether items passed, changed, or errored, then continue to the next-move prompt. If it exits non-zero, surface the failing command and the important stderr/stdout lines; make only high-confidence fixes to the replay script or instrumentation, rerun once, then continue to the next-move prompt. Do not run the broad Replay phase from here; this step is only the just-captured trace smoke test.
+19. After the single-trace replay attempt finishes, ask the user for the next move:
+
+   > A) **Keep instrumenting**: pick the next workflow to trace *(recommended)* → step 10
+   > B) **Instrument another target**: scan again or read a different named location → step 10
+   > C) **Done instrumenting**: stop adding workflows; continue to replay verification, or finish if you ran Instrument on its own → step 1 of the Replay phase (mode `wizard`); otherwise step 1 of the Cleanup phase
 
 ## Modify
 
