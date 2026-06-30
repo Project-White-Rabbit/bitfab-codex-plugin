@@ -133,6 +133,57 @@ describe("codex session runtime", () => {
             process.chdir(oldCwd);
         }
     });
+    it("resolves an unrecorded runtime when MCP has a worktree but no session env", () => {
+        const pluginCache = path.join(tmp, "plugin-cache");
+        fs.mkdirSync(pluginCache, { recursive: true });
+        process.env.SUPERSET_WORKSPACE_PATH = repo;
+        const oldCwd = process.cwd();
+        try {
+            process.chdir(pluginCache);
+            expect(resolveCodexSessionRuntime()).toMatchObject({
+                sessionId: "unknown",
+                worktree: repo,
+            });
+        }
+        finally {
+            process.chdir(oldCwd);
+        }
+    });
+    it("does not use parent cwd when current cwd is already a worktree", () => {
+        process.env.SUPERSET_WORKSPACE_PATH = path.join(tmp, "missing-worktree");
+        const oldCwd = process.cwd();
+        try {
+            process.chdir(repo);
+            expect(resolveCodexSessionRuntime()).toMatchObject({
+                sessionId: "unknown",
+                worktree: repo,
+            });
+        }
+        finally {
+            process.chdir(oldCwd);
+        }
+    });
+    it("prefers explicit workspace env over plugin-cache fallback", () => {
+        const otherRepo = path.join(tmp, "other-worktree");
+        fs.mkdirSync(path.join(otherRepo, "bitfab-codex-plugin"), {
+            recursive: true,
+        });
+        fs.writeFileSync(path.join(otherRepo, "pnpm-workspace.yaml"), "packages: []\n");
+        const pluginCache = path.join(process.env.CODEX_HOME ?? "", "plugins", "cache", "bitfab-internal", "bitfab", "local");
+        fs.mkdirSync(pluginCache, { recursive: true });
+        process.env.SUPERSET_WORKSPACE_PATH = otherRepo;
+        const oldCwd = process.cwd();
+        try {
+            process.chdir(pluginCache);
+            expect(resolveCodexSessionRuntime()).toMatchObject({
+                sessionId: "unknown",
+                worktree: otherRepo,
+            });
+        }
+        finally {
+            process.chdir(oldCwd);
+        }
+    });
     it("returns the worktree MCP server path when it exists", () => {
         const runtime = recordCodexSessionRuntime({
             session_id: "session-a",

@@ -13,6 +13,10 @@ function hasCodexSessionId() {
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
+function setRuntimeProjectEnv(worktree) {
+    process.env.BITFAB_PROJECT_ROOT ??= worktree;
+    process.env.BITFAB_WORKSPACE_ROOT ??= worktree;
+}
 async function resolveRuntimeForMcp() {
     let runtime = resolveCodexSessionRuntime();
     if (runtime || !hasCodexSessionId()) {
@@ -36,6 +40,7 @@ async function delegateToSessionRuntime() {
     if (!runtime) {
         return false;
     }
+    setRuntimeProjectEnv(runtime.worktree);
     process.chdir(runtime.worktree);
     const serverPath = runtimeServerPath(runtime);
     if (!serverPath) {
@@ -51,6 +56,8 @@ async function delegateToSessionRuntime() {
             ...process.env,
             BITFAB_CODEX_RUNTIME_DELEGATED: "1",
             BITFAB_CODEX_SHIM_ROOT: PLUGIN_ROOT,
+            BITFAB_PROJECT_ROOT: process.env.BITFAB_PROJECT_ROOT ?? runtime.worktree,
+            BITFAB_WORKSPACE_ROOT: process.env.BITFAB_WORKSPACE_ROOT ?? runtime.worktree,
         },
         stdio: "inherit",
     });
@@ -85,6 +92,7 @@ async function delegateToSessionRuntime() {
 async function startBundledMcpServer() {
     const runtime = await resolveRuntimeForMcp();
     if (runtime) {
+        setRuntimeProjectEnv(runtime.worktree);
         process.chdir(runtime.worktree);
     }
     startMcpServer(platform, getConfig, getVersion()).catch((err) => {

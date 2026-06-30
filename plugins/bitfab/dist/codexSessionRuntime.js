@@ -57,12 +57,41 @@ function cwdFromSessionLog() {
         return null;
     }
 }
+function cwdFromProcess(pid) {
+    if (pid <= 0) {
+        return null;
+    }
+    try {
+        const cwd = fs.realpathSync(`/proc/${pid}/cwd`);
+        return fs.existsSync(cwd) ? cwd : null;
+    }
+    catch { }
+    try {
+        const output = execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+        });
+        const cwd = output
+            .split("\n")
+            .find((line) => line.startsWith("n/"))
+            ?.slice(1);
+        return cwd && fs.existsSync(cwd) ? cwd : null;
+    }
+    catch { }
+    return null;
+}
+function isPluginCacheCwd() {
+    const cwd = process.cwd();
+    const pluginCacheRoot = path.join(codexHome(), "plugins", "cache");
+    return (cwd === pluginCacheRoot || cwd.startsWith(`${pluginCacheRoot}${path.sep}`));
+}
 function resolveCodexWorktree(input) {
     const candidates = [
         input?.cwd,
         process.env.SUPERSET_WORKSPACE_PATH,
         cwdFromSessionLog(),
         process.cwd(),
+        isPluginCacheCwd() ? cwdFromProcess(process.ppid) : null,
     ].filter((candidate) => Boolean(candidate));
     for (const candidate of candidates) {
         const root = findRepoRoot(candidate);
@@ -113,8 +142,16 @@ export function readCodexSessionRuntime(sessionId = codexSessionId() ?? undefine
     return null;
 }
 export function resolveCodexSessionRuntime(input) {
-    return (readCodexSessionRuntime(codexSessionId(input) ?? undefined) ??
-        recordCodexSessionRuntime(input));
+    const existing = readCodexSessionRuntime(codexSessionId(input) ?? undefined);
+    if (existing) {
+        return existing;
+    }
+    const recorded = recordCodexSessionRuntime(input);
+    if (recorded) {
+        return recorded;
+    }
+    const worktree = resolveCodexWorktree(input);
+    return worktree ? runtimeForWorktree(worktree) : null;
 }
 export function runtimeServerPath(runtime) {
     const serverPath = path.join(runtime.bitfabRuntime, "dist", "mcp", "server.js");
