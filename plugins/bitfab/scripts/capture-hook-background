@@ -1,0 +1,24 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+HOOK_TYPE="${1:-}"
+
+if [ "$HOOK_TYPE" != "PreToolUse" ]; then
+  exec "$ROOT/scripts/capture-hook" "$@"
+fi
+
+STATE_DIR="${TMPDIR:-/tmp}/bitfab-codex-hooks"
+mkdir -p "$STATE_DIR" 2>/dev/null || exit 0
+
+INPUT_FILE="$(mktemp "$STATE_DIR/pretooluse.XXXXXX")" || exit 0
+cat > "$INPUT_FILE" || true
+
+LOG_FILE="$STATE_DIR/pretooluse.log"
+
+(
+  trap 'rm -f "$INPUT_FILE"' EXIT HUP INT TERM
+  "$ROOT/scripts/capture-hook" "$@" < "$INPUT_FILE" >> "$LOG_FILE" 2>&1
+) >/dev/null 2>&1 &
+
+exit 0

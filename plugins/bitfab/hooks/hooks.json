@@ -18,8 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'for d in \"${CODEX_HOME:-$HOME/.codex}/plugins/cache/bitfab-internal/bitfab/local\" \"${CODEX_HOME:-$HOME/.codex}/plugins/cache\"/*/bitfab/*; do [ -x \"$d/scripts/capture-hook\" ] && exec \"$d/scripts/capture-hook\" PreToolUse; done; exit 0'",
-            "async": true
+            "command": "sh -c 'for d in \"${CODEX_HOME:-$HOME/.codex}/plugins/cache/bitfab-internal/bitfab/local\" \"${CODEX_HOME:-$HOME/.codex}/plugins/cache\"/*/bitfab/*; do [ -x \"$d/scripts/capture-hook-background\" ] && exec \"$d/scripts/capture-hook-background\" PreToolUse; done; exit 0'"
           }
         ]
       }
