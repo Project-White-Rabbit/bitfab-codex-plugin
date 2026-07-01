@@ -157,6 +157,7 @@ It never opens a second window while a session is recorded: it either reuses it 
 
 Output events:
 - `{"event":"navigated","sessionId":"...","path":"..."}`, reused an existing session.
+- `{"event":"window-opened","url":"..."}`, opened a fresh Studio window. Immediately surface the URL to the user in a normal chat message (for example, `Studio opened: <url>`) so it is copyable from the transcript; this is required even if the browser opened successfully.
 - `{"event":"started","sessionId":"..."}`, opened a new Studio window.
 - `{"event":"monitor","sessionId":"...","eventFile":"..."}`, the durable event stream path. Tail `eventFile` for the live in-session events (the daemon appends them there for the whole session, independent of any running command).
 - `{"event":"not-responding","sessionId":"..."}`, a recorded session exists but the window did not respond (the navigation retries via ping-pong before reporting this, so the tab was pinged twice and never answered). **Every** Studio-opening command emits this on a stale session (`openStudioTo.js` and the dataset/experiment/trace-plan commands alike), and none of them opens a duplicate window. **This is a gate.** Recommend the user refresh or reopen the Studio tab in their browser, then ask the user with two options: **Try again** (re-run the command that gated, the record is still on disk, so a window that came back gets reused) or **Open a new Studio** (run `node "${BITFAB_PLUGIN_DIR}/dist/commands/clearStudioSession.js"` to drop the stale record, then re-run the command, which now opens a fresh window). Only clear the record after the user approves.
@@ -194,6 +195,7 @@ The gate fires only when a recorded window went unreachable with **no close sign
 
    The script outputs these handshake JSON lines on stdout (see the Studio Lifecycle intro for the full event reference):
 
+   - `{"event":"window-opened","url":"..."}`, fresh Studio window opened. Immediately tell the user `Studio opened: <url>` in a normal chat message before continuing to poll.
    - `{"event":"started","sessionId":"..."}`, new Studio opened. The session is written to disk; all subsequent `openStudioTo.js` and `pushActivity.js` calls resolve it automatically. You do not need to track the sessionId.
    - `{"event":"navigated","sessionId":"...","path":"..."}`, navigated an existing session.
    - `{"event":"auth-required","sessionId":"..."}`, user needs to sign in. Wait for `authenticated`.
