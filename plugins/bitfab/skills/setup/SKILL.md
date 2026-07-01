@@ -160,7 +160,7 @@ Explain what Bitfab is and how this skill is organized. Read-only, no authentica
 
 ## Login
 
-**Run only when mode is `wizard` or `login`.**
+**Run only when mode is `wizard`, `login` or `instrument`.**
 
 Authenticate with Bitfab and retrieve the API key.
 
