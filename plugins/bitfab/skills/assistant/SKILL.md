@@ -922,7 +922,7 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
 
    **If a child span fails during replay, tag it with `mockOnReplay` instead of debugging it.** When a non-root span throws (missing API key for a paid call, flaky external service, deleted/moved dependency, env not reproducible), it usually blocks the whole trace from completing, even though the failure is environmental, not a bug in the function you're iterating on. The short-term fix is to mark that span as replayable from its recorded output:
 
-   1. Find the failing span's call site in the codebase (`withSpan("<spanName>", ...)` in TS, `@bitfab.span` / `bitfab.span` equivalents in other SDKs).
+   1. Find the failing span's call site in the codebase (`withSpan("<spanName>", ...)` in TS, `@bitfab.span` / `bitfab.span` equivalents in other SDKs). **This only works on a span whose call runs through a Bitfab wrapper** (a hand-written `withSpan` / `@span`, or a per-call middleware like Vercel AI's `wrapLanguageModel`). If the failing span is one the SDK only OBSERVES, reported by a callback handler, trace processor, stream, or collector (a LangChain / LangGraph node or tool, an OpenAI Agents / Claude Agent tool span, a BAML call), there is no span-options object to flag, and `mockOnReplay` cannot short-circuit it, replay only watches it and re-runs it for real. To mock such a span you must first wrap its underlying call in a manual `withSpan` / `@span` (move the boundary), then flag that manual span; otherwise use Workaround B (point replay at the source DB).
    2. Add the flag to its span declaration (TypeScript and Python today; Ruby and Go as they land):
       ```ts
       // TypeScript: SpanOptions.mockOnReplay
