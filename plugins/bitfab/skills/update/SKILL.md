@@ -19,6 +19,16 @@ Update the Bitfab Codex plugin and/or every workspace's SDK in the current proje
 |---------|-------------|
 | `update.js <mode>` | Run the plugin/SDK update script (checks versions, installs latest) |
 
+## Modes
+
+Read `$ARGUMENTS` first. If its first token is exactly one of the mode names below, run that mode. Otherwise, when this skill documents how to route the remaining arguments (see its intro), follow that; if it doesn't, run `all` and treat `$ARGUMENTS` as its input. Run only that mode's section below and skip the others.
+
+| Mode | Trigger | What it does |
+|------|---------|--------------|
+| `all` | `all` (default) | Update both the Bitfab plugin and the SDK to the latest versions. |
+| `plugin` | `plugin` | Update only the Bitfab plugin to the latest version. |
+| `sdk` | `sdk` | Update only the Bitfab SDK to the latest version. |
+
 ## Setup
 
 0. Codex does not inject a plugin-root env var. Resolve it first (same block used by `setup` and `assistant`):

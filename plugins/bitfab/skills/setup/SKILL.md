@@ -59,21 +59,6 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 
 **MCP tools:** This skill uses `get_bitfab_api_key`, `create_trace_plan`, and `get_trace_plan` (login / instrument / modify / view / `analyze-repo`), `list_trace_functions` and `search_traces` (`inspect` and `templates`), `list_organizations` (`switch-org`), `get_database_connection_status` (`db-snapshot` only), and, for the `templates` mode only, `get_template_reference`, `get_template`, and `update_template`. All come from the **local plugin MCP server** (bundled with this plugin), exposed under the `mcp__Bitfab__*` prefix.
 
-| Invocation | Action |
-|---|---|
-| `$bitfab:setup` or `$bitfab:setup wizard` | Run login, then instrument + replay (together per workflow) |
-| `$bitfab:setup explain` | Explain what Bitfab is and what each mode does (read-only, no login) |
-| `$bitfab:setup login` | Authenticate for setup/instrumentation (Studio/assistant flows log in inline, no pre-login) |
-| `$bitfab:setup instrument` | Instrument AI workflows with Bitfab tracing |
-| `$bitfab:setup modify` | Modify an existing trace setup (add context, change depth, or move the root) |
-| `$bitfab:setup inspect` | Diagnose (and offer to fix) your tracing setup: auth, what's instrumented, plugin/SDK freshness, replay coverage, trace arrival |
-| `$bitfab:setup switch-org` | Switch which Bitfab org the plugin reads and writes (replaces the local API key) |
-| `$bitfab:setup view` | Open the trace planner UI for an existing trace function (read-only) |
-| `$bitfab:setup replay` | Create or update replay scripts for instrumented workflows |
-| `$bitfab:setup db-snapshot` | Set up per-trace database snapshots so replay runs against the DB state at trace time (TypeScript, Python, Ruby) |
-| `$bitfab:setup session-logs` | Opt in or out of session log collection (no login required) |
-| `$bitfab:setup templates [<key>]` | Iterate on the span-rendering templates for one trace function |
-| `$bitfab:setup analyze-repo [limit=<n>]` | Non-interactively scan the repo, pick the top workflows to trace (default 5, or `limit=<n>`), and upload a draft trace plan for each (no prompts, no code changes) |
 
 **CLI commands** available via Bash (all paths relative to `${BITFAB_PLUGIN_DIR}/dist/commands/`):
 
@@ -89,6 +74,26 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 | `clearStudioSession.js` | Clear the stale active-Studio pointer so the next open starts fresh |
 | `update.js <mode>` | Check plugin + SDK versions and install the latest (used by inspect to detect and fix staleness) |
 | `sessionLogConsent.js [get|set true|set false]` | Read (`get` prints `true`/`false`/`null`) or persist (`set true|false`) the global session-log consent flag |
+
+## Modes
+
+Read `$ARGUMENTS` first. If its first token is exactly one of the mode names below, run that mode. Otherwise, when this skill documents how to route the remaining arguments (see its intro), follow that; if it doesn't, run `wizard` and treat `$ARGUMENTS` as its input. Run only that mode's section below and skip the others.
+
+| Mode | Trigger | What it does |
+|------|---------|--------------|
+| `wizard` | `wizard` (default) | Run login, then instrument + replay (together per workflow). |
+| `explain` | `explain` | Explain what Bitfab is and what each mode does (read-only, no login). |
+| `login` | `login` | Authenticate for setup/instrumentation (Studio/assistant flows log in inline, no pre-login). |
+| `session-logs` | `session-logs` | Opt in or out of session log collection (no login required). |
+| `instrument` | `instrument` | Instrument AI workflows with Bitfab tracing. |
+| `modify` | `modify` | Modify an existing trace setup (add context, change depth, or move the root). |
+| `inspect` | `inspect` | Diagnose (and offer to fix) your tracing setup: auth, what's instrumented, plugin/SDK freshness, replay coverage, trace arrival. |
+| `switch-org` | `switch-org` | Switch which Bitfab org the plugin reads and writes (replaces the local API key). |
+| `view` | `view` | Open the trace planner UI for an existing trace function (read-only). |
+| `replay` | `replay` | Create or update replay scripts for instrumented workflows. |
+| `db-snapshot` | `db-snapshot` | Set up per-trace database snapshots so replay runs against the DB state at trace time (TypeScript, Python, Ruby). |
+| `templates` | `templates` | Iterate on the span-rendering templates for one trace function. |
+| `analyze-repo` | `analyze-repo` | Non-interactively scan the repo, pick the top workflows to trace (default 5, or `limit=<n>`), and upload a draft trace plan for each (no prompts, no code changes). |
 
 ## Preamble
 
