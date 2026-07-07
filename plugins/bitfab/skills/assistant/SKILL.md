@@ -718,7 +718,9 @@ Entry for `experiment`, `cost-optimize`, and `benchmark` modes, which skip the f
 
    **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Running experiments"`.
 
-   The trace function key comes from the argument and no prior phase has run. Pick the dataset to run against (`experiment` and `cost-optimize` modes iterate against it; `benchmark` mode replays it once to measure the current code), then locate the code:
+   **Skip on re-entry (cost-optimize).** If you are returning to this phase from the cost-diagnosis phase (`cost/diagnose`) and already hold a picked `datasetId` with its traces loaded in working context, do NOT re-pick or re-load the dataset and do NOT branch back into `cost/diagnose`: skip this step entirely and continue to `pick-execution-mode` below. The dataset-pick runs once per run. (Under split-chain the cost phase tails back into this skill, which re-enters here at the top; this guard is what stops `pick-dataset → cost → pick-dataset` from looping.)
+
+   The trace function key comes from the argument and no prior phase has run (on the first pass). Pick the dataset to run against (`experiment` and `cost-optimize` modes iterate against it; `benchmark` mode replays it once to measure the current code), then locate the code:
 
    1. **Grep the codebase** for the trace function key (e.g. `grep -r "<traceFunctionKey>" --include="*.ts" --include="*.tsx" --include="*.py" --include="*.rb" --include="*.go" --include="*.baml"`) and note the file path. This is the code under test (the code you'll iterate on in `experiment` / `cost-optimize` mode, or measure as-is in `benchmark` mode).
    2. **Pick the dataset.** If a `<dataset-id>` argument was provided, use it directly. Otherwise call `mcp__Bitfab__list_datasets` with the trace function key, present the result to the user as a numbered choice, and use their choice. Hold the chosen `datasetId` in working context.
