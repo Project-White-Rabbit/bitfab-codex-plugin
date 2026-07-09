@@ -22,6 +22,7 @@ MKT_NAME="bitfab-internal"
 STABLE_VENDOR_DIR="$CODEX_HOME/bitfab/internal-marketplace"
 CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab/local"
 DEV_CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab-dev/local"
+ACCOUNTS_CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab-accounts/local"
 CONFIG_TOML="$CODEX_HOME/config.toml"
 
 cd "$REPO_ROOT"
@@ -93,6 +94,39 @@ if [ -d "$DEV_PLUGIN_SRC/skills" ] && [ -f "$DEV_PLUGIN_SRC/.codex-plugin/plugin
   rsync -a --delete "$VENDOR_DIR/plugins/bitfab-dev/" "$DEV_CACHE_DIR/"
 else
   echo "==> Skipping bitfab-dev (bitfab-dev-codex-plugin not built; run bitfab-plugin-lib build first)" >&2
+fi
+
+# bitfab-accounts: the internal sales-account plugin (log-meeting). Skills-only
+# and driven entirely by the Notion MCP, with no worktree-relative scripts, so
+# unlike bitfab-dev it needs no session-routed shims: the vendored skill content
+# is identical across worktrees. Rides in the same stable shim marketplace.
+echo "==> Vendoring bitfab-accounts into $VENDOR_DIR/plugins/bitfab-accounts"
+ACCOUNTS_PLUGIN_SRC="$REPO_ROOT/bitfab-accounts-codex-plugin"
+if [ -d "$ACCOUNTS_PLUGIN_SRC/skills" ] && [ -f "$ACCOUNTS_PLUGIN_SRC/.codex-plugin/plugin.json" ]; then
+  rm -rf "$VENDOR_DIR/plugins/bitfab-accounts"
+  mkdir -p "$VENDOR_DIR/plugins/bitfab-accounts"
+  rsync -a --exclude node_modules "$ACCOUNTS_PLUGIN_SRC/" "$VENDOR_DIR/plugins/bitfab-accounts/"
+
+  echo "==> Adding bitfab-accounts to $VENDOR_DIR/.agents/plugins/marketplace.json"
+  node -e "
+    const fs = require('fs');
+    const p = '$VENDOR_DIR/.agents/plugins/marketplace.json';
+    const mkt = JSON.parse(fs.readFileSync(p, 'utf8'));
+    mkt.plugins = (mkt.plugins || []).filter((x) => x.name !== 'bitfab-accounts');
+    mkt.plugins.push({
+      name: 'bitfab-accounts',
+      source: { source: 'local', path: './plugins/bitfab-accounts' },
+      policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' },
+      category: 'sales',
+    });
+    fs.writeFileSync(p, JSON.stringify(mkt, null, 2) + '\n');
+  "
+
+  echo "==> Installing bitfab-accounts into $ACCOUNTS_CACHE_DIR"
+  mkdir -p "$ACCOUNTS_CACHE_DIR"
+  rsync -a --delete "$VENDOR_DIR/plugins/bitfab-accounts/" "$ACCOUNTS_CACHE_DIR/"
+else
+  echo "==> Skipping bitfab-accounts (bitfab-accounts-codex-plugin not built; run bitfab-accounts-lib build first)" >&2
 fi
 
 echo "==> Publishing stable marketplace source to $STABLE_VENDOR_DIR"
