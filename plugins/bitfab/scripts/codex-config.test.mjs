@@ -27,10 +27,13 @@ beforeEach(() => {
   configPath = path.join(codexHome, "config.toml")
   fs.mkdirSync(path.join(codexHome, "plugins", "cache"), { recursive: true })
   vendor = fs.mkdtempSync(path.join(os.tmpdir(), "vendor-"))
-  // A real vendored marketplace contains both plugins; ensure-dev only enables
-  // bitfab-dev when plugins/bitfab-dev is present in the source.
+  // A real vendored marketplace contains all internal plugins; ensure-dev only
+  // enables optional plugins when their vendor directories are present.
   fs.mkdirSync(path.join(vendor, "plugins", "bitfab"), { recursive: true })
   fs.mkdirSync(path.join(vendor, "plugins", "bitfab-dev"), { recursive: true })
+  fs.mkdirSync(path.join(vendor, "plugins", "bitfab-accounts"), {
+    recursive: true,
+  })
 })
 
 afterEach(() => {
@@ -39,7 +42,7 @@ afterEach(() => {
 })
 
 describe("codex-config ensure-dev (stable shim)", () => {
-  it("registers the stable shim marketplace with dev bitfab + bitfab-dev enabled", () => {
+  it("registers the stable shim marketplace with internal plugins enabled", () => {
     run("ensure-dev", configPath, vendor, "bitfab-internal")
     const cfg = readConfig()
     expect(cfg).toContain("[marketplaces.bitfab-internal]")
@@ -47,6 +50,9 @@ describe("codex-config ensure-dev (stable shim)", () => {
     expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = true')
     expect(cfg).toContain(
       '[plugins."bitfab-dev@bitfab-internal"]\nenabled = true',
+    )
+    expect(cfg).toContain(
+      '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
     )
   })
 
@@ -92,6 +98,9 @@ describe("codex-config ensure-dev (stable shim)", () => {
         '[plugins."bitfab-dev@bitfab-internal"]',
         "enabled = false",
         "",
+        '[plugins."bitfab-accounts@bitfab-internal"]',
+        "enabled = false",
+        "",
       ].join("\n"),
     )
     run("ensure-dev", configPath, vendor, "bitfab-internal")
@@ -100,6 +109,9 @@ describe("codex-config ensure-dev (stable shim)", () => {
     expect(cfg).toContain(`source = "${vendor}"`)
     expect(cfg).toContain(
       '[plugins."bitfab-dev@bitfab-internal"]\nenabled = true',
+    )
+    expect(cfg).toContain(
+      '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
     )
     expect(fs.existsSync(stableCache)).toBe(true)
   })
@@ -119,6 +131,9 @@ describe("codex-config ensure-dev (stable shim)", () => {
         '[plugins."bitfab-dev@bitfab-dev"]',
         "enabled = true",
         "",
+        '[plugins."bitfab-accounts@bitfab-dev"]',
+        "enabled = true",
+        "",
       ].join("\n"),
     )
     run("ensure-dev", configPath, vendor, "bitfab-internal")
@@ -128,6 +143,7 @@ describe("codex-config ensure-dev (stable shim)", () => {
     // The orphan dev plugin block must go too, not be left pointing at a
     // marketplace that no longer exists.
     expect(cfg).not.toContain('"bitfab-dev@bitfab-dev"')
+    expect(cfg).not.toContain('"bitfab-accounts@bitfab-dev"')
     expect(fs.existsSync(legacyCache)).toBe(true)
   })
 
@@ -146,6 +162,9 @@ describe("codex-config ensure-dev (stable shim)", () => {
         'source = "/no/such/worktree/path"',
         "",
         '[plugins."bitfab-dev@bitfab-internal-dead"]',
+        "enabled = true",
+        "",
+        '[plugins."bitfab-accounts@bitfab-internal-dead"]',
         "enabled = true",
         "",
       ].join("\n"),
@@ -173,6 +192,9 @@ describe("codex-config ensure-dev (stable shim)", () => {
         '[plugins."bitfab-dev@bitfab-internal-orphan"]',
         "enabled = true",
         "",
+        '[plugins."bitfab-accounts@bitfab-internal-orphan"]',
+        "enabled = true",
+        "",
       ].join("\n"),
     )
     run("ensure-dev", configPath, vendor, "bitfab-internal")
@@ -193,6 +215,9 @@ describe("codex-config ensure-dev (stable shim)", () => {
       configPath,
       [
         '[plugins."bitfab@bitfab-internal-nested".mcp_servers.Bitfab.tools.get_bitfab_api_key]',
+        "enabled = false",
+        "",
+        '[plugins."bitfab-accounts@bitfab-internal-nested".mcp_servers.notion.tools.notion-search]',
         "enabled = false",
         "",
       ].join("\n"),
@@ -237,8 +262,14 @@ describe("codex-config ensure-dev (stable shim)", () => {
           '[plugins."bitfab-dev@bitfab-internal-wt-b"]',
           "enabled = true",
           "",
+          '[plugins."bitfab-accounts@bitfab-internal-wt-b"]',
+          "enabled = true",
+          "",
           '[hooks.state."bitfab@bitfab-internal-wt-b:hooks/hooks.json:session_start:0:0"]',
           'trusted_hash = "sha256:test"',
+          "",
+          '[hooks.state."bitfab-accounts@bitfab-internal-wt-b:hooks/hooks.json:session_start:0:0"]',
+          'trusted_hash = "sha256:accounts"',
           "",
         ].join("\n"),
       )
@@ -246,11 +277,16 @@ describe("codex-config ensure-dev (stable shim)", () => {
       const cfg = readConfig()
       expect(cfg).not.toContain("[marketplaces.bitfab-internal-wt-b]")
       expect(cfg).not.toContain("bitfab-dev@bitfab-internal-wt-b")
+      expect(cfg).not.toContain("bitfab-accounts@bitfab-internal-wt-b")
       expect(cfg).not.toContain("bitfab@bitfab-internal-wt-b:hooks")
+      expect(cfg).not.toContain("bitfab-accounts@bitfab-internal-wt-b:hooks")
       expect(fs.existsSync(siblingCache)).toBe(true)
       // current worktree active
       expect(cfg).toContain(
         '[plugins."bitfab-dev@bitfab-internal"]\nenabled = true',
+      )
+      expect(cfg).toContain(
+        '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
       )
     } finally {
       fs.rmSync(sibling, { recursive: true, force: true })
@@ -266,6 +302,9 @@ describe("codex-config ensure-dev (stable shim)", () => {
         "",
         '[hooks.state."bitfab@bitfab-internal-wt-b:hooks/hooks.json:session_start:0:0"]',
         'trusted_hash = "sha256:test"',
+        "",
+        '[hooks.state."bitfab-accounts@bitfab-internal-wt-b:hooks/hooks.json:session_start:0:0"]',
+        'trusted_hash = "sha256:accounts"',
         "",
       ].join("\n"),
     )
@@ -319,6 +358,17 @@ describe("codex-config ensure-dev (stable shim)", () => {
     expect(cfg).not.toContain("bitfab-dev@bitfab-internal")
   })
 
+  it("leaves bitfab-accounts uninstalled (no enabled block) when it was not vendored", () => {
+    fs.rmSync(path.join(vendor, "plugins", "bitfab-accounts"), {
+      recursive: true,
+      force: true,
+    })
+    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    const cfg = readConfig()
+    expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = true')
+    expect(cfg).not.toContain("bitfab-accounts@bitfab-internal")
+  })
+
   it("drops a previously-enabled bitfab-dev block once it is no longer vendored", () => {
     run("ensure-dev", configPath, vendor, "bitfab-internal")
     expect(readConfig()).toContain(
@@ -331,6 +381,19 @@ describe("codex-config ensure-dev (stable shim)", () => {
     })
     run("ensure-dev", configPath, vendor, "bitfab-internal")
     expect(readConfig()).not.toContain("bitfab-dev@bitfab-internal")
+  })
+
+  it("drops a previously-enabled bitfab-accounts block once it is no longer vendored", () => {
+    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    expect(readConfig()).toContain(
+      '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
+    )
+    fs.rmSync(path.join(vendor, "plugins", "bitfab-accounts"), {
+      recursive: true,
+      force: true,
+    })
+    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    expect(readConfig()).not.toContain("bitfab-accounts@bitfab-internal")
   })
 })
 
@@ -346,13 +409,16 @@ describe("codex-config toggle (stable shim)", () => {
     expect(cfg).toContain('[plugins."bitfab@bitfab"]\nenabled = false')
   })
 
-  it("prod disables the stable shim bitfab and enables prod, leaving bitfab-dev on", () => {
+  it("prod disables the stable shim bitfab and enables prod, leaving helper plugins on", () => {
     run("toggle", configPath, "prod", "bitfab-internal")
     const cfg = readConfig()
     expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = false')
     expect(cfg).toContain('[plugins."bitfab@bitfab"]\nenabled = true')
     expect(cfg).toContain(
       '[plugins."bitfab-dev@bitfab-internal"]\nenabled = true',
+    )
+    expect(cfg).toContain(
+      '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
     )
   })
 })
@@ -388,6 +454,9 @@ describe("codex-config restore-prod (main repo)", () => {
     expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = false')
     expect(cfg).toContain(
       '[plugins."bitfab-dev@bitfab-internal"]\nenabled = false',
+    )
+    expect(cfg).toContain(
+      '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = false',
     )
   })
 })

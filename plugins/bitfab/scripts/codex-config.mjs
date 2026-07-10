@@ -22,6 +22,8 @@ import fs from "node:fs"
 import path from "node:path"
 
 const [, , cmd, configPath, arg, arg2] = process.argv
+const INTERNAL_PLUGINS = ["bitfab", "bitfab-dev", "bitfab-accounts"]
+const OPTIONAL_INTERNAL_PLUGINS = ["bitfab-dev", "bitfab-accounts"]
 
 function usage() {
   console.error(
@@ -182,7 +184,7 @@ function listInternalHookStateMarketplaces(content) {
   const names = new Set()
   for (const line of content.split("\n")) {
     const m = line.match(
-      /^\[hooks\.state\."(?:bitfab|bitfab-dev)@(bitfab-internal(?:-[^:"]+)?):/,
+      /^\[hooks\.state\."(?:bitfab|bitfab-dev|bitfab-accounts)@(bitfab-internal(?:-[^:"]+)?):/,
     )
     if (m) {
       names.add(m[1])
@@ -195,7 +197,7 @@ function listInternalPluginMarketplaces(content) {
   const names = new Set()
   for (const line of content.split("\n")) {
     const m = line.match(
-      /^\[plugins\."(?:bitfab|bitfab-dev)@(bitfab-internal(?:-[^"]+)?)"(?:\.|\])/,
+      /^\[plugins\."(?:bitfab|bitfab-dev|bitfab-accounts)@(bitfab-internal(?:-[^"]+)?)"(?:\.|\])/,
     )
     if (m) {
       names.add(m[1])
@@ -204,15 +206,15 @@ function listInternalPluginMarketplaces(content) {
   return [...names]
 }
 
-/** Remove a marketplace and its bitfab/bitfab-dev plugin config. */
+/** Remove a marketplace and its internal plugin config. */
 function dropMarketplace(content, mktName) {
   let next = removeSection(content, `[marketplaces.${mktName}]`)
   const pluginRe = new RegExp(
-    `^\\[plugins\\."(?:bitfab|bitfab-dev)@${escapeRegex(mktName)}"(?:\\.|\\])`,
+    `^\\[plugins\\."(?:bitfab|bitfab-dev|bitfab-accounts)@${escapeRegex(mktName)}"(?:\\.|\\])`,
   )
   next = removeSectionsMatching(next, (header) => pluginRe.test(header))
   const hookStateRe = new RegExp(
-    `^\\[hooks\\.state\\."(?:bitfab|bitfab-dev)@${escapeRegex(mktName)}:`,
+    `^\\[hooks\\.state\\."(?:bitfab|bitfab-dev|bitfab-accounts)@${escapeRegex(mktName)}:`,
   )
   next = removeSectionsMatching(next, (header) => hookStateRe.test(header))
   return next
@@ -263,41 +265,40 @@ function ensureDev(vendorPath, mktName) {
     "source",
     quote(absVendor),
   )
-  // A worktree must run the dev shim, not prod: enable bitfab + bitfab-dev on
+  // A worktree must run the dev shim, not prod: enable bitfab and the vendored
+  // internal helper plugins on
   // the stable internal marketplace and disable the prod bitfab marketplace.
   // Codex's config is global, so this flips prod off for every session until a
   // main-repo session calls `restore-prod` (see the SessionStart hook). The
   // dev/prod `toggle` command can still override.
   content = setKey(content, `[plugins."bitfab@${mktName}"]`, "enabled", "true")
-  // Enable bitfab-dev only if it was actually vendored into this marketplace.
-  // install-dev.sh skips vendoring bitfab-dev when bitfab-dev-codex-plugin isn't
-  // built, and the every-session reconcile can run against an older vendor; in
-  // either case enabling a plugin Codex can't find from the marketplace source
-  // would fail plugin load. Drop the block when absent so the config never
-  // claims an uninstalled plugin.
-  const devVendored = fs.existsSync(
-    path.join(absVendor, "plugins", "bitfab-dev"),
-  )
-  if (devVendored) {
-    content = setKey(
-      content,
-      `[plugins."bitfab-dev@${mktName}"]`,
-      "enabled",
-      "true",
-    )
-  } else {
-    content = removeSection(content, `[plugins."bitfab-dev@${mktName}"]`)
+  const optionalPluginStatus = new Map()
+  for (const plugin of OPTIONAL_INTERNAL_PLUGINS) {
+    const vendored = fs.existsSync(path.join(absVendor, "plugins", plugin))
+    optionalPluginStatus.set(plugin, vendored)
+    if (vendored) {
+      content = setKey(
+        content,
+        `[plugins."${plugin}@${mktName}"]`,
+        "enabled",
+        "true",
+      )
+    } else {
+      content = removeSection(content, `[plugins."${plugin}@${mktName}"]`)
+    }
   }
   content = setKey(content, '[plugins."bitfab@bitfab"]', "enabled", "false")
 
   writeConfig(content)
   console.log(`[codex-config] marketplaces.${mktName}.source = ${absVendor}`)
   console.log(`[codex-config] plugins."bitfab@${mktName}".enabled = true`)
-  console.log(
-    devVendored
-      ? `[codex-config] plugins."bitfab-dev@${mktName}".enabled = true`
-      : `[codex-config] bitfab-dev not vendored; left uninstalled`,
-  )
+  for (const [plugin, vendored] of optionalPluginStatus) {
+    console.log(
+      vendored
+        ? `[codex-config] plugins."${plugin}@${mktName}".enabled = true`
+        : `[codex-config] ${plugin} not vendored; left uninstalled`,
+    )
+  }
   console.log(
     `[codex-config] plugins."bitfab@bitfab".enabled = false (prod off)`,
   )
@@ -311,7 +312,7 @@ function ensureDev(vendorPath, mktName) {
 function restoreProd() {
   let content = readConfig()
   for (const name of listInternalMarketplaces(content)) {
-    for (const plugin of ["bitfab", "bitfab-dev"]) {
+    for (const plugin of INTERNAL_PLUGINS) {
       const header = `[plugins."${plugin}@${name}"]`
       if (locateSection(content.split("\n"), header)) {
         content = setKey(content, header, "enabled", "false")
