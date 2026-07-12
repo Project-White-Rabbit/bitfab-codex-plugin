@@ -162,11 +162,11 @@ It never opens a second window while a session is recorded: it either reuses it 
 
 Output events:
 - `{"event":"navigated","sessionId":"...","path":"..."}`, reused an existing session.
-- `{"event":"window-opened","url":"..."}`, opened a fresh Studio window. Immediately surface the URL to the user in a normal chat message (for example, `Studio opened: <url>`) so it is copyable from the transcript; this is required even if the browser opened successfully.
+- `{"event":"window-open-requested","url":"..."}`, a fresh Studio window open was *requested* (the browser launch was called), not confirmed on screen. Immediately surface the URL to the user in a normal chat message (for example, `Opening Studio: <url> - click it if a window doesn't appear`) so it is copyable from the transcript; on a remote/SSH session or with no supported browser nothing may surface, so the link is the reliable fallback.
 - `{"event":"started","sessionId":"..."}`, opened a new Studio window.
 - `{"event":"monitor","sessionId":"...","eventFile":"..."}`, the durable event stream path. Tail `eventFile` for the live in-session events (the daemon appends them there for the whole session, independent of any running command).
 - `{"event":"not-responding","sessionId":"..."}`, a recorded session exists but the window did not respond (the navigation retries via ping-pong before reporting this, so the tab was pinged twice and never answered). **Every** Studio-opening command emits this on a stale session (`openStudioTo.js` and the dataset/experiment/trace-plan commands alike), and none of them opens a duplicate window. **This is a gate.** Recommend the user refresh or reopen the Studio tab in their browser, then ask the user with two options: **Try again** (re-run the command that gated, the record is still on disk, so a window that came back gets reused) or **Open a new Studio** (run `node "${BITFAB_PLUGIN_DIR}/dist/commands/clearStudioSession.js"` to drop the stale record, then re-run the command, which now opens a fresh window). Only clear the record after the user approves. Some commands (e.g. `login`) also expose a `--force` flag for a user at a terminal to force-clear a stale session; never run `--force` yourself, surface the recovery to the user instead.
-- `{"event":"open-failed","sessionId":"...","reason":"..."}`, failed to open a new Studio. Surface the error.
+- `{"event":"open-failed","reason":"...","url":"..."}`, the browser process did not launch (e.g. `rate-limited`, `spawn-failed`), so no window opened. When a `url` is present, the Studio session is live and reachable, tell the user Studio couldn't open a browser (give the `reason`) and ask them to click the link to open it: `<url>`. The command keeps polling, so a manual click connects and the flow proceeds. (A bare `open-failed` with no `url` is a hard failure, surface the error.)
 
 The gate fires only when a recorded window went unreachable with **no close signal**: a crash, sleep, or a tab close no process witnessed. A cleanly closed or deliberately ended session leaves no record, so the next open just opens fresh (no handshake, no prompt).
 
@@ -200,7 +200,7 @@ The gate fires only when a recorded window went unreachable with **no close sign
 
    The script outputs these handshake JSON lines on stdout (see the Studio Lifecycle intro for the full event reference):
 
-   - `{"event":"window-opened","url":"..."}`, fresh Studio window opened. Immediately tell the user `Studio opened: <url>` in a normal chat message before continuing to poll.
+   - `{"event":"window-open-requested","url":"..."}`, a fresh Studio window open was *requested* (not confirmed on screen). Immediately surface the URL, e.g. `Opening Studio: <url> - click it if a window doesn't appear`, before continuing to poll; the link is the reliable fallback when nothing surfaces.
    - `{"event":"started","sessionId":"..."}`, new Studio opened. The session is written to disk; all subsequent `openStudioTo.js` and `pushActivity.js` calls resolve it automatically. You do not need to track the sessionId.
    - `{"event":"navigated","sessionId":"...","path":"..."}`, navigated an existing session.
    - `{"event":"auth-required","sessionId":"..."}`, user needs to sign in. Wait for `authenticated`.
@@ -583,7 +583,7 @@ In `dataset` mode this phase is the entry point, Phase 1 (function picker) and P
 
    - `{"event":"return-to-agent",...}`, user clicked **Done**. Dataset review is complete.
    - `{"event":"edit-with-agent",...,"datasetId":"..."}`, user clicked **Edit with agent**. Go to the modify loop, then come back here.
-   - `{"event":"session-ended",...}`, user closed Studio entirely.
+   - `{"event":"session-ended",...}`, user closed Studio entirely. **Exception:** a `"reason":"never-connected"` field means the user did NOT close anything, the Studio window never actually opened. Tell them that, and offer to re-run the open (the stale session is auto-cleared, so the re-run opens a fresh window). Terminal events from the wrapper commands (`cancelled` from `startDataset.js`/`openTracePlan.js`, `ended` from the experiments commands) carry the same `reason` field and get the same treatment: never-connected is "window never opened, offer retry", not a user abort.
    - `{"event":"navigated",...}`, Studio navigated to a new page (informational).
    - `{"event":"element-clicked",...}` / `{"event":"focusChanged",...}`, user interaction events (used during template editing).
 
