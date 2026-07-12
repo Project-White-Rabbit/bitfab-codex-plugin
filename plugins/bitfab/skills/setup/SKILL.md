@@ -30,11 +30,11 @@ description: "Set up and maintain Bitfab tracing for AI features. TRIGGER when: 
 - Stop polling only when: (a) the process exits 0 with its completion summary, (b) the process exits non-zero, or (c) the user explicitly cancels.
 - When the process exits, immediately continue with the next step, do not wait for another user message.
 
-This skill has twelve phases: **explain**, **login**, **session-logs**, **instrument**, **modify**, **inspect**, **switch-org**, **view**, **replay**, **db-snapshot**, **templates**, and **analyze-repo**. Run individually or all at once (`wizard` runs login → instrument → replay; `explain` is a standalone read-only overview that requires no login; `session-logs` is standalone and does not require login; `modify` is only invoked explicitly or as a branch from Instrument's existing-SDK-usage menu; `inspect` is a standalone diagnostic (with optional one-shot fixes) invoked explicitly; `switch-org` is a standalone account action (requires auth) invoked explicitly; `view` is only invoked explicitly; `db-snapshot` is only invoked explicitly; `templates` is only invoked explicitly; `analyze-repo` is a standalone, **non-interactive** batch action (requires auth) invoked explicitly: it scans, picks the top few candidates, and uploads a draft trace plan for each, asking nothing and editing no code).
+This skill has twelve phases: **explain**, **login**, **session-logs**, **instrument**, **modify**, **inspect**, **switch-org**, **view**, **replay**, **db-snapshot**, **templates**, and **analyze-repo**. Run individually or through setup (`wizard` runs login → instrument; `explain` is a standalone read-only overview that requires no login; `session-logs` is standalone and does not require login; `modify` is only invoked explicitly or as a branch from Instrument's existing-SDK-usage menu; `inspect` is a standalone diagnostic (with optional one-shot fixes) invoked explicitly; `switch-org` is a standalone account action (requires auth) invoked explicitly; `view` is only invoked explicitly; `db-snapshot` is only invoked explicitly; `templates` is only invoked explicitly; `analyze-repo` is a standalone, **non-interactive** batch action (requires auth) invoked explicitly: it scans, picks the top few candidates, and uploads a draft trace plan for each, asking nothing and editing no code).
 
 **Natural-language aliases (these reuse an existing mode, not a separate one):** "explain Bitfab" / "what is Bitfab" → `explain`; "trace a new workflow" / "instrument a new flow" / "create a trace plan" / "give me the trace plan" / "give me the trace plan for <function>" / "show me the trace plan" / "bitfab create a plan" / "instrument the second/next/other one" / "instrument another function" → `instrument` (a bare `$bitfab:setup` with one of these phrasings routes to Instrument, NOT the full `wizard`); "update-setup" / "update my tracing setup" / "adjust what's captured" → `modify` (NOT a plugin/SDK *version* bump, that's `$bitfab:update`); "debug-setup" / "debug my tracing setup" / "inspect my tracing" / "why aren't my traces showing up" / "what's instrumented" → `inspect` (for output-*quality* debugging use `$bitfab:assistant` instead); "switch org" / "change org" / "switch to the <name> org" / "I'm in the wrong org" → `switch-org`; "set up db snapshots" / "set up db branching" / "replay against my database" / "replay against the database at trace time" / "database snapshots for replay" → `db-snapshot`; "analyze the repo" / "analyze-repo" / "scan the codebase and draft trace plans" / "find the top things to instrument and upload plans for them" → `analyze-repo` (non-interactive: never prompts, never edits code, just uploads draft plans).
 
-Within an Instrument cycle, **instrumentation and the replay pipeline for the cycle's trace function are written together in the same cycle** once the trace plan is confirmed (see Instrument's write-instrumentation step). The Replay phase in `wizard` mode is therefore a coverage-verification/backfill sweep, it typically finds every key already wired up.
+Within an Instrument cycle, **instrumentation and the replay pipeline for the cycle's trace function are written together in the same cycle** once the trace plan is confirmed (see Instrument's write-instrumentation step). The standalone `replay` mode remains available for coverage-verification and backfill.
 
 **Before running plugin commands below**, resolve `BITFAB_PLUGIN_DIR` in the shell. Codex does not inject a plugin-root env var, so you must determine it. Copy and run this block verbatim, it auto-detects whichever install is active (dev, prod, or a custom `CODEX_HOME`):
 
@@ -68,7 +68,6 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 | `login.js` | Authenticate for setup/instrumentation; standalone browser OAuth (blocks). Studio, dataset, and experiment flows log in inline and need no pre-login. |
 | `switchOrg.js [<clerkOrganizationId>]` | List the user's Bitfab orgs (no args), or switch the plugin's active org and replace the local API key (with a <clerkOrganizationId> arg) |
 | `openTracePlan.js <planId>` | Open the trace plan confirmation UI in Studio (blocks until user confirms or cancels) |
-| `waitForTrace.js <trace-function-key>` | Poll for the first trace to arrive (blocks up to ~10 min) |
 | `startTemplatePreview.js <functionKey>` | Open the template editor preview in Studio (blocks until user clicks Done) |
 | `closeStudio.js [message]` | Close the active Studio session (tab + background event process); no-op when nothing is open |
 | `clearStudioSession.js` | Clear the stale active-Studio pointer so the next open starts fresh |
@@ -81,7 +80,7 @@ Read `$ARGUMENTS` first. If its first token is exactly one of the mode names bel
 
 | Mode | Trigger | What it does |
 |------|---------|--------------|
-| `wizard` | `wizard` (default) | Run login, then instrument + replay (together per workflow). |
+| `wizard` | `wizard` (default) | Run login, then instrument workflows until the user is done. |
 | `explain` | `explain` | Explain what Bitfab is and what each mode does (read-only, no login). |
 | `login` | `login` | Authenticate for setup/instrumentation (Studio/assistant flows log in inline, no pre-login). |
 | `session-logs` | `session-logs` | Opt in or out of session log collection (no login required). |
@@ -120,9 +119,7 @@ Read `$ARGUMENTS` first. If its first token is exactly one of the mode names bel
 
    Setup runs in two phases:
      1. LOGIN                , authenticate (15s, browser)
-     2. INSTRUMENT + REPLAY  , written together per workflow:
-        • INSTRUMENT         , wrap your workflows with tracing (purely additive)
-        • REPLAY             , generate a replay script for your trace functions
+     2. INSTRUMENT           , wrap workflows with tracing and generate their replay scripts
    ```
 
    Then proceed to Login.
@@ -153,7 +150,7 @@ Explain what Bitfab is and how this skill is organized. Read-only, no authentica
                  Turns production data into a ready-made regression test.
 
    What you can run
-     $bitfab:setup            Login, then instrument + replay (the full setup)
+     $bitfab:setup            Login, then instrument workflows until done
      $bitfab:setup explain    This overview (read-only)
      $bitfab:setup login      Authenticate with Bitfab
      $bitfab:setup instrument Wrap a new AI workflow with tracing
@@ -260,9 +257,9 @@ Bitfab captures every AI function call, inputs, outputs, and errors, so you can 
 
    > A) **Search for more workflows**: find uninstrumented gaps *(recommended)* → step 3
    > B) **Modify an existing trace setup**: jump to the Modify phase → step 1 of the Modify phase
-   > C) **Continue**: done instrumenting → step 1 of the Replay phase (mode `wizard`); otherwise step 1 of the Cleanup phase
+   > C) **Continue**: done instrumenting → step 1 of the Cleanup phase
 
-     If "Modify", jump to the Modify phase. If "Continue", follow the option's destination: Replay in `wizard` mode, Cleanup otherwise.
+     If "Modify", jump to the Modify phase. If "Continue", go to Cleanup.
    - **If usage routes through a project-local shim** (a wrapper file that re-exports `withSpan` / `@span` / `bitfab_span` / `getCurrentTrace` / `getCurrentSpan` with custom init, often named `lib/bitfab.*` or after a predecessor SDK such as `lib/simforge.*`), audit the shim before instrumenting anything new. The shim must (a) construct the SDK client (`new Bitfab(...)`, `bitfab_init()`, `Bitfab::Client.new`, etc.) at module load, **synchronously**, never lazily inside the wrapped function; and (b) hand off to the SDK call synchronously, with no `await` between the user's entry to the shim and `client.withSpan(...)` / `@bitfab.span(...)`. Lazy or async client init (e.g. `await getOrCreateTraceFunction(key)` inside the wrapped body) breaks the SDK's nesting context (TypeScript `AsyncLocalStorage`, Python `contextvars`) under any parallel fan-out (`Promise.all`, `Promise.allSettled`, `asyncio.gather`, parallel workers): every span becomes its own top-level trace instead of nesting inside its caller. Fix the shim before instrumenting anything new. (Direct callers of the SDK with no shim already satisfy this rule, skip the audit.)
    - If not found: **proceed to step 3**: no SDK usage does NOT mean nothing to instrument, it means the SDK hasn't been installed yet. NEVER conclude "nothing to instrument" before completing step 6.
 3. Use the API key from the Login phase (or retrieve it now if already authenticated)
@@ -393,7 +390,7 @@ Bitfab captures every AI function call, inputs, outputs, and errors, so you can 
      - **Side-effect check**: if importing the instrumented function triggers module-level side effects (booting listeners/ports/prod connections), do not work around it silently, flag it to the user so they can scope the replay env correctly.
 
    The trace plan's `Files changed:` list must include the replay script path for this cycle (new or edited) alongside the instrumented files.
-14. Tell the user how to run the app to generate the first trace AND, once traces exist, how to run the replay script for this pipeline, give exact command(s) for both. Do NOT run them yourself. (Omit the replay command for Go-only projects.) **If step 10 flagged this function as reading stored DB state** (TypeScript, Python, Ruby), add one line: replay currently reads today's data, run `$bitfab:setup db-snapshot` to make it replay against the database state at trace time.
+14. Give the user a clear completion message that explains how to run the instrumented workflow and, once traces exist, the replay script for this pipeline. If the repository reveals an exact command or user action that drives the real instrumented path, provide it. If it does not, name the application path or workflow that must be exercised without inventing a command. Always give the exact replay command when one was generated. Do NOT run either command yourself. (Omit the replay command for Go-only projects.) **If step 10 flagged this function as reading stored DB state** (TypeScript, Python, Ruby), add one line: replay currently reads today's data, run `$bitfab:setup db-snapshot` to make it replay against the database state at trace time.
 
    **Generate the trace by driving the instrumented path, not by instrumenting a new one.** If the convenient local entrypoint (a dev CLI, script, or REPL) bypasses the wrapped root and calls the inner function directly, common when prod runs behind an orchestrator (Temporal, a job/queue worker), its trace won't match production. Say so, then steer to driving the real path or rerouting the harness through the wrapped entrypoint, never add a span to a dev/test-only entrypoint just to make its trace look right.
 
@@ -408,46 +405,13 @@ Bitfab captures every AI function call, inputs, outputs, and errors, so you can 
    - Same symbol? yes/no
    - If no, why is this impossible?
    ```
-15. **MANDATORY STOP, never silently end the cycle without the A/B/C/D prompt.** Ask the user (we recommend **A**: get a real trace flowing before instrumenting the next workflow):
+15. After the run instructions from step 14, ask the user what to do next:
 
-   > A) **Wait for the first trace [current workflow]**: you run the app (or let me); I watch for the trace to land and report it *(recommended)* → step 16
-   > B) **Instrument [next workflow]**: [why it's the next highest value] → step 10
-   > C) **Instrument [other workflow]**: [alternative] → step 10
-   > D) **Done instrumenting**: stop adding workflows; continue to replay verification, or finish if you ran Instrument on its own → step 1 of the Replay phase (mode `wizard`); otherwise step 1 of the Cleanup phase
+   > A) **Instrument [next workflow]**: [why it is the next highest-value workflow] *(recommended)* → step 8
+   > B) **Instrument another target**: scan again or read a different file, function, or directory → step 7
+   > C) **Done instrumenting**: finish setup → step 1 of the Cleanup phase
 
-   **For option A**, go to step 16 and watch for a trace before asking whether to try replay.
-
-   B and C return to step 10 for the selected workflow. A returns there after the trace/replay follow-up prompts unless the user chooses to be done. Only D exits the Instrument loop. **If the next workflow the user wants isn't already in the discovered list** (common when the first cycle came from the point-to-it path, where step 9 only read the one named location), first run another discovery pass, scan via step 8 or read another named location via step 9, then present. Never tell the user there's nothing left to instrument just because the targeted read only surfaced one workflow.
-
-   **After D in `wizard` mode, Replay ALWAYS runs** as a coverage-verification/backfill sweep. Step 13 already wrote a replay pipeline for every trace function instrumented in this session, so Replay is usually a no-op that confirms coverage; it still runs to catch any pre-existing trace function keys that don't yet have a pipeline and to verify Replay Output Contract compliance across all pipelines. Replay does not depend on traces existing, replay scripts are built from trace function keys in the instrumented code, not captured trace data. In `instrument` mode, D stops after the Instrument loop.
-
-   **Re-entry rule (applies after you leave this loop).** If, later in the conversation, the user asks for another function's trace plan in plain language (`give me the trace plan to instrument the second one`, `instrument the next one`, `instrument another function`), that is a fresh Instrument cycle: re-invoke `$bitfab:setup instrument` (name the mode, so it goes straight to Instrument rather than falling back to the full `wizard`) so it runs through the trace-plan UI. **Never satisfy such a request by hand-writing a trace plan as a chat message (a markdown table of captured nodes), that skips the Studio confirmation UI (`mcp__Bitfab__create_trace_plan` + `openTracePlan`) and is exactly the miss this rule prevents.**
-16. Restate the run command from step 14 so the user can run it (or let you run it for them). Before starting the wait, tell the user verbatim: `Run your app now to produce a trace (or tell me to run it for you). I'll watch and report the first trace when it lands, up to ~10 min. Press Esc to cancel.` Then run in a shell (allow up to ~11 min):
-
-   ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/waitForTrace.js" <trace-function-key>
-   ```
-
-   The command blocks inside Node, polling Bitfab every 10s until a trace lands or the ~10 min timeout fires, so no agent tokens are burned while waiting. When it exits, parse the final stdout line as JSON:
-
-   - **`{"status":"found","traceId":"...","url":"..."}`**: report the trace URL and preserve the returned traceId for the replay prompt → step 17
-   - **`{"status":"timeout",...}`**: note that no trace arrived yet, then return to workflow selection → step 10
-   - **`{"status":"interrupted",...}`**: note that the user cancelled, then return to workflow selection → step 10
-17. After reporting the first trace URL, ask the user whether to try the replay script against that exact trace now. Recommend **A** for non-Go projects because this validates the replay pipeline while the user still has the workflow fresh.
-
-   > A) **Try replay now**: run the generated replay script against the trace that just landed *(recommended)* → step 18
-   > B) **Keep instrumenting**: skip replay for now and pick the next workflow → step 10
-   > C) **Done instrumenting**: stop adding workflows; continue to replay verification, or finish if you ran Instrument on its own → step 1 of the Replay phase (mode `wizard`); otherwise step 1 of the Cleanup phase
-
-   For option A, run only the current workflow's generated replay command from step 14, adding `--trace-ids <traceId>` with the trace id from step 16. If the project is Go-only and no replay command was generated, say Go has no replay support and choose option B or C instead.
-18. Run the exact replay command generated in step 14 for the current workflow, adding `--trace-ids <traceId>` for the trace id returned by step 16. Keep the command's normal env loader (for example `pnpm with-env`, `dotenv run`, or the project's equivalent). Do not substitute mocks or a different entrypoint.
-
-   If the replay exits 0, summarize the test run URL and whether items passed, changed, or errored, then continue to the next-move prompt. If it exits non-zero, surface the failing command and the important stderr/stdout lines; make only high-confidence fixes to the replay script or instrumentation, rerun once, then continue to the next-move prompt. Do not run the broad Replay phase from here; this step is only the just-captured trace smoke test.
-19. After the single-trace replay attempt finishes, ask the user for the next move:
-
-   > A) **Keep instrumenting**: pick the next workflow to trace *(recommended)* → step 10
-   > B) **Instrument another target**: scan again or read a different named location → step 10
-   > C) **Done instrumenting**: stop adding workflows; continue to replay verification, or finish if you ran Instrument on its own → step 1 of the Replay phase (mode `wizard`); otherwise step 1 of the Cleanup phase
+   A starts another one-workflow cycle with a fresh full discovery pass before presenting the next workflow. This keeps the list complete when the previous cycle came from a targeted read that only surfaced one location. B returns to discovery so the user can point to a target or request another scan. C exits the Instrument loop. If no next workflow was found, omit A and offer only B and C.
 
 ## Modify
 
@@ -684,13 +648,13 @@ Every View invocation targets **exactly one** trace function. The browser UI's C
 
 ## Replay
 
-**Run only when mode is `wizard` or `replay`.**
+**Run only when mode is `replay`.**
 
 Create or update replay scripts for instrumented trace functions. Requires instrumentation in the codebase; does **not** require existing traces, replay scripts are created from trace function keys in the code, not captured trace data.
 
 Replay scripts let the team regression-test any trace function against production data with one command, they fetch historical traces, re-run them through the current code, and report old vs. new outputs side-by-side. Note: **Go does not support replay**: skip this phase if the project is Go-only.
 
-**Relationship to Instrument.** When Replay runs via `wizard` mode or directly after Instrument, most (often all) trace function keys already have pipelines because Instrument's write-instrumentation step writes them alongside the instrumentation edits in the same cycle. This phase is then a coverage + contract-compliance sweep. Run it standalone (`$bitfab:setup replay`) to catch pre-existing trace function keys that predate that step or were added outside the skill.
+**Relationship to Instrument.** Instrument's write-instrumentation step writes each replay pipeline alongside the instrumentation edits. Run this mode standalone (`$bitfab:setup replay`) to catch pre-existing trace function keys that predate that step or were added outside the skill.
 
 **Source of truth:** two pages, read both before creating or modifying a replay script. Do not improvise from memory.
 - **Canonical `replay` API signature, options, and return shape:** `/reference/typescript.md`, `/reference/python.md`, `/reference/ruby.md` (Go has no replay). Use this for the exact field names (`result` / `originalOutput` vs `original_output`), default `limit`, `maxConcurrency`/`max_concurrency`, error behavior.
