@@ -96,7 +96,7 @@ else
   echo "==> Skipping bitfab-dev (bitfab-dev-codex-plugin not built; run bitfab-plugin-lib build first)" >&2
 fi
 
-# bitfab-accounts: the internal sales-account plugin (log-meeting). Skills-only
+# bitfab-accounts: the internal sales-account plugin. Skills-only
 # and driven entirely by the Notion MCP, with no worktree-relative scripts, so
 # unlike bitfab-dev it needs no session-routed shims: the vendored skill content
 # is identical across worktrees. Rides in the same stable shim marketplace.
