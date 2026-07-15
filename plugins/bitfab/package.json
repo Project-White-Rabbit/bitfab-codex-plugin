@@ -1,6 +1,6 @@
 {
   "name": "bitfab-codex-plugin",
-  "version": "0.8.153",
+  "version": "0.8.154",
   "description": "Automated regression testing and improvements for your prompts, context, and tool calls.",
   "type": "module",
   "scripts": {
