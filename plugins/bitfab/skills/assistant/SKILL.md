@@ -53,7 +53,7 @@ When in genuine doubt between the two, default to **`benchmark`** (it's non-dest
 
 **Disambiguating `replay` from `experiment`** (both re-run one or more traces against the code, so free-form text is easy to misroute):
 
-- Pick **`replay`** when the user wants to *re-run one specific trace and hear whether it's fixed/passing now*, with nothing persisted: a UUID (trace ID) appears in the message (alone or with a function key); verify-a-fix phrasing like "did my fix work", "does this trace pass now", "rerun/replay this trace", "check if my change fixed it", "is `<id>` good now"; or the message is scoped to a single trace and a change the user already made, with no mention of datasets, labeling, pass rates across many traces, or "experiments." `replay` is in-chat only and makes no edits of its own.
+- Pick **`replay`** when the user wants to *re-run one specific trace and hear whether it's fixed/passing now*, without editing code or building a dataset: a UUID (trace ID) appears in the message (alone or with a function key); verify-a-fix phrasing like "did my fix work", "does this trace pass now", "rerun/replay this trace", "check if my change fixed it", "is `<id>` good now"; or the message is scoped to a single trace and a change the user already made, with no mention of datasets, labeling, pass rates across many traces, or "experiments." `replay` runs in-chat (no Studio, no dataset, no experiment groups) and makes no edits of its own; it does save its pass/fail verdict onto the replay trace when the SDK supports replay trace IDs.
 - Pick **`experiment`** (or **`cost-optimize`** for a cost goal, see the cost-optimization routing note below) when the user wants to *change the code and see if it improves a whole labeled dataset*: "fix", "improve", "iterate", "try a prompt change", "make these traces pass", "improve the pass rate", "reduce token usage on the dataset", "cut tokens", "lower the cost", "run experiments on the failures." Token/cost-reduction asks pick an editing mode **even when a trace ID is present**: `replay` makes no edits, so it can't optimize anything (the mentioned trace just helps pick the function/dataset). The editing modes edit code, replay a dataset, and loop.
 
 When in genuine doubt between the two, default to **`replay`** if a single trace ID is present AND the intent is verify-only (not "fix it", not token/cost reduction): it's the lighter, in-chat path and the user can roll into `fix` or `experiment` afterward. If the single-trace intent is to actually fix the bug, prefer **`fix`** (see its disambiguation note below); otherwise default to **`cost-optimize`** for a token/cost-reduction intent (see the next note) and **`experiment`** for a quality intent across a dataset. Either way, say which you picked and why in one line so the user can redirect.
@@ -61,7 +61,7 @@ When in genuine doubt between the two, default to **`replay`** if a single trace
 **Disambiguating `fix` from `replay` and `experiment`** (all three involve a trace and the code, so a "fix" ask with a trace ID is easy to misroute):
 
 - Pick **`fix`** when the user points at **one specific failing trace and wants it actually fixed and saved in a dataset**: "fix this bug", "fix trace `<id>`", "find and fix the trace where <bad behavior happened>", "this trace is wrong, make it pass", "this output is broken, fix it and save it as a test." The trace anchor can be a trace ID **or a smoking-gun description to search for** ("the trace where Peek remembered a random config value", "the one that answered with the old policy"). If the user says **"find and fix"** / **"search ... and fix"** / **"fix the trace where ..."**, route to `fix`, not `investigate`: the search is just how Phase Fix resolves the target trace. `fix` edits code, but unlike `experiment` it bootstraps its own dataset from that one trace (adding it with a validated failing label once the fix proves out) instead of needing an existing labeled dataset, and unlike `replay` it makes the change itself instead of only verifying one you already made.
-- Pick **`replay`** when the user only wants to **verify a change they already made** on one trace, nothing persisted: "did my fix work", "does `<id>` pass now", "rerun this trace." No editing, no dataset, no saved label.
+- Pick **`replay`** when the user only wants to **verify a change they already made** on one trace: "did my fix work", "does `<id>` pass now", "rerun this trace." No editing and no dataset, though it does save its pass/fail verdict onto the replay trace.
 - Pick **`experiment`** when the scope is a **whole labeled dataset** ("improve the pass rate", "fix the failures", "run experiments on the dataset"), not a single named trace, and a dataset with validated failing labels already exists.
 
 When in genuine doubt with a single trace ID present: a "fix it / make it pass" intent goes to `fix`; a "did it work / check it" intent goes to `replay`. Say which you picked and why in one line so the user can redirect.
@@ -119,7 +119,7 @@ Read `$ARGUMENTS` first. If its first token is exactly one of the mode names bel
 | `investigate` | `investigate` | `[<key>]`. Free-form investigation of an issue the user describes: read traces and code to characterize the problem, then offer to stop with a summary, write an analysis report, or roll into dataset building. `<key>` is optional (inferred from the ask). |
 | `benchmark` | `benchmark` | `<key> [<dataset-id>] [studio]`. **No edits to the function under test.** Replay a labeled dataset against the current code, score each trace against its labels, report a pass/fail scorecard, then stop. Terminal-only by default; append `studio` to stream verdicts live in Studio. |
 | `add-trace` | `add-trace` | `[<key>] <trace-id...> [<dataset-id>]`. Lightweight: attach one or more existing traces to a dataset (pick or create one), then stop. No labeling, diagnosis, experiments, or Studio. `<key>` is optional (inferred from the traces). |
-| `replay` | `replay` | `<key> <trace-id>`. Minimal single-trace replay, entirely in-chat: run the replay script against one trace and report pass/fail in one line. No Studio, dataset, labeling, or server-side persistence. For verifying a fix you already made. |
+| `replay` | `replay` | `<key> <trace-id>`. Minimal single-trace replay, in-chat: run the replay script against one trace, report pass/fail in one line, and persist that verdict onto the replay trace (in-chat-only when the replay returns no server trace ID). No Studio, dataset, or labeling UI. For verifying a fix you already made. |
 | `fix` | `fix` | `[<key>] <trace-id>`. **Fix one specific bug end to end.** Resolve and diagnose the failing trace, then edit code and replay only that trace until it passes; once green, add it to a dataset with a validated failing label, then offer Studio / full-dataset experiment / keep iterating / stop. **Requires a trace anchor** (a trace ID, or a failure clearly pointed at in a traced function): a bare 'fix this bug' about ordinary code is NOT this mode. `<key>` is optional (inferred from the trace). |
 
 ## Phase 0: Setup
@@ -1285,7 +1285,7 @@ This phase begins at `detect-replay-capabilities`. `experiment` / `benchmark` mo
 
 **Run only when mode is `replay`.**
 
-Reached only from `replay` mode. The user already has a trace ID and (usually) already made a fix; they just want to replay that one trace and hear whether it worked. This is the **minimal, atomic** path: no Studio/browser, no dataset, no labeling, no experiment groups, no server-side verdict persistence. Locate the replay script, read the trace, run replay against the single trace ID, compare the new output to the original, and report a one-line verdict in chat. The only server interaction is the replay itself (the SDK creates a test run intrinsically); nothing else is persisted.
+Reached only from `replay` mode. The user already has a trace ID and (usually) already made a fix; they just want to replay that one trace and hear whether it worked. This is the **minimal, atomic** path: no Studio/browser, no dataset, no experiment groups. Locate the replay script, read the trace, run replay against the single trace ID, compare the new output to the original, and report a one-line verdict in chat. **Whenever you derive a pass/fail verdict, persist it onto the replay trace** (the same local label you show in chat, saved via node "${BITFAB_PLUGIN_DIR}/dist/commands/persistReplayLabels.js") so it isn't silently thrown away. The one exception is an SDK too old to expose replay trace IDs: persistence is then impossible, so the verdict stays in-chat only with an upgrade nudge. The replay itself creates a test run intrinsically (the SDK does this); persistence just adds the agent verdict on top.
 
 1. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Setting up replay"`.
 
@@ -1293,33 +1293,56 @@ Reached only from `replay` mode. The user already has a trace ID and (usually) a
 
    **1. Read the trace (and resolve the function key).** Call `mcp__Bitfab__read_traces` with the trace ID argument and `scope: "full"`. Hold the trace's label, annotation, inputs, and output in context, these are the acceptance criteria for the verdict. **If the user gave only a trace ID and no function key** (common with free-form requests like "did my fix work on `<id>`"), take the trace function key from the trace itself, don't ask the user for it.
 
-   **2. Find the replay script.** Search for files matching `scripts/replay.*`, `scripts/*replay*`, or any file importing `bitfab.replay` / `client.replay`, and confirm it covers that trace function key. (You don't need to grep for capability flags here, this minimal path doesn't use code-change payloads, experiment groups, or verdict persistence.)
+   **2. Find the replay script.** Search for files matching `scripts/replay.*`, `scripts/*replay*`, or any file importing `bitfab.replay` / `client.replay`, and confirm it covers that trace function key. (You don't need to grep for capability flags here, this minimal path doesn't use code-change payloads or experiment groups. It does persist the verdict in the `verdict` step, straight from the replay output's server trace id, with no extra script capability required.)
 
    - **replay script found and trace readable**: continue to run the replay → step 2
    - **no replay script found for this function**: tell the user: "No replay script found for `<key>`. Run `$bitfab:setup replay <key>` to create one, then re-run this command." Stop the flow → step 1 of the Cleanup phase
    - **trace not found or unreadable**: tell the user the trace ID wasn't found or is inaccessible, stop → step 1 of the Cleanup phase
 2. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Running replay"`.
 
-   **Run the replay against the one trace ID. No user interaction, no extra flags.**
+   **Run the replay against the one trace ID. No user interaction, no extra flags.** Invoke the replay script you located in `setup` with the project's own language runner:
 
    ```bash
-   cd <project-dir> && npx tsx <replay-script> <function-key> --trace-ids <trace-id>
+   # TypeScript: cd <project-dir> && npx tsx <replay-script> <function-key> --trace-ids <trace-id>
+   # Python:     cd <project-dir> && python <replay-script> <function-key> --trace-ids <trace-id>   (or uv run / poetry run)
+   # Ruby:       cd <project-dir> && ruby <replay-script> <function-key> --trace-ids <trace-id>      (or bundle exec)
    ```
 
-   This is a single-trace, in-chat path: run the replay directly, no progress-bar wrapper (one item has nothing to track). Do **not** pass `--code-change` or `--experiment-group-id`, this minimal path skips code-change payloads and experiment groups. Capture the JSON output and exit code.
+   This is a single-trace, in-chat path: run the replay directly, no progress-bar wrapper (one item has nothing to track). Do **not** pass `--code-change` or `--experiment-group-id`, this minimal path skips code-change payloads and experiment groups (persisting the verdict in the next step needs neither). Capture the full replay-result JSON and exit code, and from it hold the run's test-run id (`testRunId` in TS, `test_run_id` in Python/Ruby) and the completed item's trace id (`traceId` in TS, `trace_id` in Python/Ruby). **In the final replay result this trace id is already the SERVER replay trace id** (the SDK's `completeReplay` overwrites the local id with the server row id before returning), so the verdict step persists against it directly, no `get_replay_status` mapping. **If it is `null`, persistence is impossible this run** (an old server/SDK that returns no server-trace-id mapping), note that so the verdict step falls back to an in-chat-only verdict.
 
    **Quick health check.** If the replay crashed (non-zero exit, no items) or the single item has `item.error` set, hold the error for the verdict step. Otherwise hold the completed item's new output alongside the original output you read in `setup`.
 3. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Evaluating result"`.
 
-   **Compare the single replay result to the original and report in one line.** Nothing is persisted; this is an in-chat verdict.
+   **Compare the single replay result to the original, report one line, then persist that verdict onto the replay trace.**
 
-   **If the replay errored** (crashed or `item.error` set): report the error clearly. This is an infra issue (missing DB row, env mismatch, etc.), not a code failure. Offer to retry after fixing the env, or to stop.
+   **If the replay errored** (crashed or `item.error` set): report the error clearly. This is an infra issue (missing DB row, env mismatch, etc.), not a code failure. There is no verdict to persist. Offer to retry after fixing the env, or to stop.
 
    **If the replay completed**, compare the new output against the original trace's label and annotation, then report one line:
 
    - Original was **fail** with an annotation: does the new output address it? → "**Pass**: the fix addresses the original failure ('<annotation summary>')." vs "**Still failing**: <what's still wrong>."
    - Original was **pass**: preserved → "**Pass**: output unchanged in quality." regressed → "**Regressed**: was passing, now <what broke>."
    - No label on the original: show a short before/after diff and summarize whether it looks better.
+
+   **Then persist that verdict onto the replay trace.** The pass/fail you just reported is a local label, save it so it survives the session and lands on the replay trace, exactly like the full replay path. This is not optional when persistence is possible: displaying a verdict and dropping it is the bug this step exists to prevent.
+
+   - **If the completed item's trace id is non-null** (its value is already the SERVER replay trace id, per the `run` step): persist against it directly, no `get_replay_status` call. Write a one-entry verdicts file to an absolute path under `<repoRoot>/.bitfab/tmp/` (`<repoRoot>` = `git rev-parse --show-toplevel`; create the dir if missing) and run the persist script. **The verdicts file keys are the command's fixed camelCase contract (`expectedTraceIds`, `traceId`) regardless of the SDK language, its VALUE is the server trace id you held from the replay output (`traceId` in TS, `trace_id` in Python/Ruby):**
+
+     ```json
+     {
+       "expectedTraceIds": ["<server-trace-id>"],
+       "verdicts": [
+         { "traceId": "<server-trace-id>", "label": true, "annotation": "<the same one-line reason you reported above>", "confidence": "High" }
+       ]
+     }
+     ```
+
+     ```bash
+     node "${BITFAB_PLUGIN_DIR}/dist/commands/persistReplayLabels.js" <repoRoot>/.bitfab/tmp/verdicts-<test-run-id>.json
+     ```
+
+     `label` is `true` for Pass, `false` for Still-failing / Regressed. Read the script's single JSON status line: `ok` means the verdict is now on the replay trace, add "· saved" to your one-line report.
+   - **If the completed item's trace id is `null`** (old server/SDK that returns no server-trace-id mapping, from the `run` step's note): persistence is impossible. Keep the verdict in-chat only and tell the user once: "This replay didn't return a server trace ID, so the verdict can't be saved. Upgrade the SDK/server and run `$bitfab:setup replay` to regenerate the script." Don't block the flow on it.
+   - **No-label original** (you showed a before/after diff, no pass/fail): there's no verdict to persist, just report the diff.
 
    > A) **Iterate**: make another change and re-replay the same trace → step 4
    > B) **Done** *(recommended)* → step 1 of the Cleanup phase
