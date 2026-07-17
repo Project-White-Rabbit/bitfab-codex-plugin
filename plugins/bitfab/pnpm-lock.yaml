@@ -26,7 +26,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.0
-        version: 4.1.10(@types/node@20.19.43)(vite@8.1.4(@types/node@20.19.43))
+        version: 4.1.10(@types/node@20.19.43)(vite@8.1.5(@types/node@20.19.43))
 
 packages:
 
@@ -738,8 +738,8 @@ packages:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
 
-  vite@8.1.4:
-    resolution: {integrity: sha512-bTT9PsdWO+MQMNG9ZXIP/qM9wGh37DFxTV/sPq9cFpHr3w4jkgef032PkAL9jAqhk3Nz8NQw3O8n6/xFkqO4QQ==}
+  vite@8.1.5:
+    resolution: {integrity: sha512-7ULLwsCdYx/nRyrpiEwvqb5TFHrMVZyBt+rg/OAXT7rgj/z+DtTDyKFeLAdDkubDVDKD8jOsndmy7m55XcfUsw==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
@@ -978,13 +978,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.0
 
-  '@vitest/mocker@4.1.10(vite@8.1.4(@types/node@20.19.43))':
+  '@vitest/mocker@4.1.10(vite@8.1.5(@types/node@20.19.43))':
     dependencies:
       '@vitest/spy': 4.1.10
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.1.4(@types/node@20.19.43)
+      vite: 8.1.5(@types/node@20.19.43)
 
   '@vitest/pretty-format@4.1.10':
     dependencies:
@@ -1507,7 +1507,7 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vite@8.1.4(@types/node@20.19.43):
+  vite@8.1.5(@types/node@20.19.43):
     dependencies:
       lightningcss: 1.32.0
       picomatch: 4.0.5
@@ -1518,10 +1518,10 @@ snapshots:
       '@types/node': 20.19.43
       fsevents: 2.3.3
 
-  vitest@4.1.10(@types/node@20.19.43)(vite@8.1.4(@types/node@20.19.43)):
+  vitest@4.1.10(@types/node@20.19.43)(vite@8.1.5(@types/node@20.19.43)):
     dependencies:
       '@vitest/expect': 4.1.10
-      '@vitest/mocker': 4.1.10(vite@8.1.4(@types/node@20.19.43))
+      '@vitest/mocker': 4.1.10(vite@8.1.5(@types/node@20.19.43))
       '@vitest/pretty-format': 4.1.10
       '@vitest/runner': 4.1.10
       '@vitest/snapshot': 4.1.10
@@ -1538,7 +1538,7 @@ snapshots:
       tinyexec: 1.2.4
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
-      vite: 8.1.4(@types/node@20.19.43)
+      vite: 8.1.5(@types/node@20.19.43)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 20.19.43
