@@ -27,8 +27,8 @@ beforeEach(() => {
   configPath = path.join(codexHome, "config.toml")
   fs.mkdirSync(path.join(codexHome, "plugins", "cache"), { recursive: true })
   vendor = fs.mkdtempSync(path.join(os.tmpdir(), "vendor-"))
-  // A real vendored marketplace contains all internal plugins; ensure-dev only
-  // enables optional plugins when their vendor directories are present.
+  // A real vendored marketplace contains all internal plugins; ensure-install
+  // only registers optional plugins when their vendor directories are present.
   fs.mkdirSync(path.join(vendor, "plugins", "bitfab"), { recursive: true })
   fs.mkdirSync(path.join(vendor, "plugins", "bitfab-dev"), { recursive: true })
   fs.mkdirSync(path.join(vendor, "plugins", "bitfab-accounts"), {
@@ -41,13 +41,13 @@ afterEach(() => {
   fs.rmSync(vendor, { recursive: true, force: true })
 })
 
-describe("codex-config ensure-dev (stable shim)", () => {
-  it("registers the stable shim marketplace with internal plugins enabled", () => {
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+describe("codex-config ensure-install (stable shim)", () => {
+  it("registers helpers globally while leaving the dev core disabled", () => {
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     const cfg = readConfig()
     expect(cfg).toContain("[marketplaces.bitfab-internal]")
     expect(cfg).toContain(`source = "${vendor}"`)
-    expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = true')
+    expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = false')
     expect(cfg).toContain(
       '[plugins."bitfab-dev@bitfab-internal"]\nenabled = true',
     )
@@ -56,13 +56,13 @@ describe("codex-config ensure-dev (stable shim)", () => {
     )
   })
 
-  it("disables the prod bitfab@bitfab plugin (worktrees run dev, not prod)", () => {
-    fs.writeFileSync(configPath, '[plugins."bitfab@bitfab"]\nenabled = true\n')
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
-    expect(readConfig()).toContain('[plugins."bitfab@bitfab"]\nenabled = false')
+  it("keeps the global production plugin enabled", () => {
+    fs.writeFileSync(configPath, '[plugins."bitfab@bitfab"]\nenabled = false\n')
+    run("ensure-install", configPath, vendor, "bitfab-internal")
+    expect(readConfig()).toContain('[plugins."bitfab@bitfab"]\nenabled = true')
   })
 
-  it("preserves the prod marketplace while disabling the prod plugin", () => {
+  it("preserves the prod marketplace while enabling the prod plugin", () => {
     fs.writeFileSync(
       configPath,
       [
@@ -74,11 +74,11 @@ describe("codex-config ensure-dev (stable shim)", () => {
         "",
       ].join("\n"),
     )
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     const cfg = readConfig()
     expect(cfg).toContain("[marketplaces.bitfab]")
     expect(cfg).toContain('source = "Project-White-Rabbit/bitfab-codex-plugin"')
-    expect(cfg).toContain('[plugins."bitfab@bitfab"]\nenabled = false')
+    expect(cfg).toContain('[plugins."bitfab@bitfab"]\nenabled = true')
   })
 
   it("preserves the stable bitfab-internal marketplace and rewrites its source", () => {
@@ -103,7 +103,7 @@ describe("codex-config ensure-dev (stable shim)", () => {
         "",
       ].join("\n"),
     )
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     const cfg = readConfig()
     expect(cfg).toContain("[marketplaces.bitfab-internal]")
     expect(cfg).toContain(`source = "${vendor}"`)
@@ -136,7 +136,7 @@ describe("codex-config ensure-dev (stable shim)", () => {
         "",
       ].join("\n"),
     )
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     const cfg = readConfig()
     expect(cfg).not.toContain("[marketplaces.bitfab-dev]")
     expect(cfg).not.toContain('"bitfab@bitfab-dev"')
@@ -169,7 +169,7 @@ describe("codex-config ensure-dev (stable shim)", () => {
         "",
       ].join("\n"),
     )
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     const cfg = readConfig()
     expect(cfg).not.toContain("bitfab-internal-dead")
     expect(fs.existsSync(deadCache)).toBe(true)
@@ -197,7 +197,7 @@ describe("codex-config ensure-dev (stable shim)", () => {
         "",
       ].join("\n"),
     )
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     const cfg = readConfig()
     expect(cfg).not.toContain("bitfab-internal-orphan")
     expect(fs.existsSync(orphanCache)).toBe(true)
@@ -222,7 +222,7 @@ describe("codex-config ensure-dev (stable shim)", () => {
         "",
       ].join("\n"),
     )
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     const cfg = readConfig()
     expect(cfg).not.toContain("bitfab-internal-nested")
     expect(fs.existsSync(orphanCache)).toBe(true)
@@ -238,7 +238,7 @@ describe("codex-config ensure-dev (stable shim)", () => {
     fs.mkdirSync(path.join(cacheOnly, "bitfab-dev", "local"), {
       recursive: true,
     })
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     expect(readConfig()).not.toContain("bitfab-internal-cache-only")
     expect(fs.existsSync(cacheOnly)).toBe(true)
   })
@@ -273,7 +273,7 @@ describe("codex-config ensure-dev (stable shim)", () => {
           "",
         ].join("\n"),
       )
-      run("ensure-dev", configPath, vendor, "bitfab-internal")
+      run("ensure-install", configPath, vendor, "bitfab-internal")
       const cfg = readConfig()
       expect(cfg).not.toContain("[marketplaces.bitfab-internal-wt-b]")
       expect(cfg).not.toContain("bitfab-dev@bitfab-internal-wt-b")
@@ -281,7 +281,7 @@ describe("codex-config ensure-dev (stable shim)", () => {
       expect(cfg).not.toContain("bitfab@bitfab-internal-wt-b:hooks")
       expect(cfg).not.toContain("bitfab-accounts@bitfab-internal-wt-b:hooks")
       expect(fs.existsSync(siblingCache)).toBe(true)
-      // current worktree active
+      // Helpers stay globally available while the dev core stays off.
       expect(cfg).toContain(
         '[plugins."bitfab-dev@bitfab-internal"]\nenabled = true',
       )
@@ -308,16 +308,16 @@ describe("codex-config ensure-dev (stable shim)", () => {
         "",
       ].join("\n"),
     )
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     const cfg = readConfig()
     expect(cfg).toContain("bitfab@bitfab-internal:hooks")
     expect(cfg).not.toContain("bitfab-internal-wt-b")
   })
 
   it("is idempotent: a second run produces identical output", () => {
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     const first = readConfig()
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     expect(readConfig()).toBe(first)
   })
 
@@ -340,7 +340,7 @@ describe("codex-config ensure-dev (stable shim)", () => {
     fs.mkdirSync(path.join(siblingCache, "bitfab", "local"), {
       recursive: true,
     })
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     expect(fs.existsSync(currentCache)).toBe(true)
     expect(fs.existsSync(siblingCache)).toBe(true)
   })
@@ -352,9 +352,9 @@ describe("codex-config ensure-dev (stable shim)", () => {
       recursive: true,
       force: true,
     })
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     const cfg = readConfig()
-    expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = true')
+    expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = false')
     expect(cfg).not.toContain("bitfab-dev@bitfab-internal")
   })
 
@@ -363,14 +363,14 @@ describe("codex-config ensure-dev (stable shim)", () => {
       recursive: true,
       force: true,
     })
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     const cfg = readConfig()
-    expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = true')
+    expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = false')
     expect(cfg).not.toContain("bitfab-accounts@bitfab-internal")
   })
 
-  it("drops a previously-enabled bitfab-dev block once it is no longer vendored", () => {
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+  it("drops a registered bitfab-dev block once it is no longer vendored", () => {
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     expect(readConfig()).toContain(
       '[plugins."bitfab-dev@bitfab-internal"]\nenabled = true',
     )
@@ -379,12 +379,12 @@ describe("codex-config ensure-dev (stable shim)", () => {
       recursive: true,
       force: true,
     })
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     expect(readConfig()).not.toContain("bitfab-dev@bitfab-internal")
   })
 
-  it("drops a previously-enabled bitfab-accounts block once it is no longer vendored", () => {
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+  it("drops a registered bitfab-accounts block once it is no longer vendored", () => {
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     expect(readConfig()).toContain(
       '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
     )
@@ -392,14 +392,14 @@ describe("codex-config ensure-dev (stable shim)", () => {
       recursive: true,
       force: true,
     })
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
     expect(readConfig()).not.toContain("bitfab-accounts@bitfab-internal")
   })
 })
 
 describe("codex-config toggle (stable shim)", () => {
   beforeEach(() => {
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
   })
 
   it("dev enables the stable shim bitfab and disables prod", () => {
@@ -407,9 +407,15 @@ describe("codex-config toggle (stable shim)", () => {
     const cfg = readConfig()
     expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = true')
     expect(cfg).toContain('[plugins."bitfab@bitfab"]\nenabled = false')
+    expect(cfg).toContain(
+      '[plugins."bitfab-dev@bitfab-internal"]\nenabled = true',
+    )
+    expect(cfg).toContain(
+      '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
+    )
   })
 
-  it("prod disables the stable shim bitfab and enables prod, leaving helper plugins on", () => {
+  it("prod disables the dev core and enables production, leaving helpers on", () => {
     run("toggle", configPath, "prod", "bitfab-internal")
     const cfg = readConfig()
     expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = false')
@@ -443,9 +449,10 @@ describe("codex-config ensure-trust", () => {
 })
 
 describe("codex-config restore-prod (main repo)", () => {
-  it("enables prod and disables every internal/dev plugin a worktree left on", () => {
+  it("enables the production core without disabling helper plugins", () => {
     // Simulate the global state after a worktree session: dev on, prod off.
-    run("ensure-dev", configPath, vendor, "bitfab-internal")
+    run("ensure-install", configPath, vendor, "bitfab-internal")
+    run("toggle", configPath, "dev", "bitfab-internal")
     expect(readConfig()).toContain('[plugins."bitfab@bitfab"]\nenabled = false')
 
     run("restore-prod", configPath)
@@ -453,10 +460,10 @@ describe("codex-config restore-prod (main repo)", () => {
     expect(cfg).toContain('[plugins."bitfab@bitfab"]\nenabled = true')
     expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = false')
     expect(cfg).toContain(
-      '[plugins."bitfab-dev@bitfab-internal"]\nenabled = false',
+      '[plugins."bitfab-dev@bitfab-internal"]\nenabled = true',
     )
     expect(cfg).toContain(
-      '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = false',
+      '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
     )
   })
 })

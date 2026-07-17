@@ -6,28 +6,29 @@
  * skills need to rewrite TOML in place. We use regex-based surgical edits
  * rather than a full TOML parser.
  *
- * Worktree isolation: Codex's config.toml is global with no project scoping,
- * so we register one stable `bitfab-internal` shim marketplace and route that
- * shim through a session-scoped worktree runtime map. Session start keeps the
- * stable marketplace enabled and prunes old per-worktree `bitfab-internal-*`
- * config entries. We leave sibling caches on disk because concurrently running
- * Codex sessions may still hold in-memory skill metadata that points at them.
+ * Worktree isolation: Codex stores plugin enablement globally. The uniquely
+ * named `bitfab-dev` and `bitfab-accounts` helpers therefore stay enabled in
+ * every checkout, while only the conflicting core `bitfab` plugin switches
+ * between the production marketplace and the session-routed dev shim.
  *
  * Usage:
- *   codex-config.mjs ensure-dev <configPath> <vendorPath> <marketplaceName>
- *   codex-config.mjs toggle     <configPath> <dev|prod>   <marketplaceName>
+ *   codex-config.mjs ensure-install     <configPath> <vendorPath> <marketplaceName>
+ *   codex-config.mjs ensure-dev         <configPath> <vendorPath> <marketplaceName>
+ *   codex-config.mjs toggle             <configPath> <dev|prod>   <marketplaceName>
  */
 
 import fs from "node:fs"
 import path from "node:path"
 
 const [, , cmd, configPath, arg, arg2] = process.argv
-const INTERNAL_PLUGINS = ["bitfab", "bitfab-dev", "bitfab-accounts"]
 const OPTIONAL_INTERNAL_PLUGINS = ["bitfab-dev", "bitfab-accounts"]
 
 function usage() {
   console.error(
-    "Usage: codex-config.mjs ensure-dev <configPath> <vendorPath> <marketplaceName>",
+    "Usage: codex-config.mjs ensure-install <configPath> <vendorPath> <marketplaceName>",
+  )
+  console.error(
+    "       codex-config.mjs ensure-dev <configPath> <vendorPath> <marketplaceName>",
   )
   console.error(
     "       codex-config.mjs toggle     <configPath> <dev|prod>   <marketplaceName>",
@@ -220,7 +221,7 @@ function dropMarketplace(content, mktName) {
   return next
 }
 
-function ensureDev(vendorPath, mktName) {
+function configureInstall(vendorPath, mktName, devCoreEnabled) {
   if (!vendorPath || !mktName) {
     usage()
   }
@@ -252,7 +253,8 @@ function ensureDev(vendorPath, mktName) {
     console.log(`[codex-config] pruned sibling marketplace ${name}`)
   }
 
-  // 3. Register the stable shim marketplace + plugins.
+  // 3. Register the stable shim marketplace. Helper plugins have unique
+  // namespaces, so keep them globally available in both main and worktrees.
   content = setKey(
     content,
     `[marketplaces.${mktName}]`,
@@ -265,13 +267,12 @@ function ensureDev(vendorPath, mktName) {
     "source",
     quote(absVendor),
   )
-  // A worktree must run the dev shim, not prod: enable bitfab and the vendored
-  // internal helper plugins on
-  // the stable internal marketplace and disable the prod bitfab marketplace.
-  // Codex's config is global, so this flips prod off for every session until a
-  // main-repo session calls `restore-prod` (see the SessionStart hook). The
-  // dev/prod `toggle` command can still override.
-  content = setKey(content, `[plugins."bitfab@${mktName}"]`, "enabled", "true")
+  content = setKey(
+    content,
+    `[plugins."bitfab@${mktName}"]`,
+    "enabled",
+    devCoreEnabled ? "true" : "false",
+  )
   const optionalPluginStatus = new Map()
   for (const plugin of OPTIONAL_INTERNAL_PLUGINS) {
     const vendored = fs.existsSync(path.join(absVendor, "plugins", plugin))
@@ -287,11 +288,18 @@ function ensureDev(vendorPath, mktName) {
       content = removeSection(content, `[plugins."${plugin}@${mktName}"]`)
     }
   }
-  content = setKey(content, '[plugins."bitfab@bitfab"]', "enabled", "false")
+  content = setKey(
+    content,
+    '[plugins."bitfab@bitfab"]',
+    "enabled",
+    devCoreEnabled ? "false" : "true",
+  )
 
   writeConfig(content)
   console.log(`[codex-config] marketplaces.${mktName}.source = ${absVendor}`)
-  console.log(`[codex-config] plugins."bitfab@${mktName}".enabled = true`)
+  console.log(
+    `[codex-config] plugins."bitfab@${mktName}".enabled = ${devCoreEnabled}`,
+  )
   for (const [plugin, vendored] of optionalPluginStatus) {
     console.log(
       vendored
@@ -300,23 +308,28 @@ function ensureDev(vendorPath, mktName) {
     )
   }
   console.log(
-    `[codex-config] plugins."bitfab@bitfab".enabled = false (prod off)`,
+    `[codex-config] plugins."bitfab@bitfab".enabled = ${!devCoreEnabled}`,
   )
 }
 
+function ensureInstall(vendorPath, mktName) {
+  configureInstall(vendorPath, mktName, false)
+}
+
+function ensureDev(vendorPath, mktName) {
+  configureInstall(vendorPath, mktName, true)
+}
+
 /**
- * Main-repo state: prod bitfab on, every internal/dev plugin off. Invoked by the
- * SessionStart hook when a Codex session starts in this repo's main checkout, to
- * undo the global prod-off that a prior worktree session set.
+ * Main-repo state: production core on and dev core off. Helper plugins remain
+ * available because their names do not conflict with the production plugin.
  */
 function restoreProd() {
   let content = readConfig()
   for (const name of listInternalMarketplaces(content)) {
-    for (const plugin of INTERNAL_PLUGINS) {
-      const header = `[plugins."${plugin}@${name}"]`
-      if (locateSection(content.split("\n"), header)) {
-        content = setKey(content, header, "enabled", "false")
-      }
+    const header = `[plugins."bitfab@${name}"]`
+    if (locateSection(content.split("\n"), header)) {
+      content = setKey(content, header, "enabled", "false")
     }
   }
   content = setKey(content, '[plugins."bitfab@bitfab"]', "enabled", "true")
@@ -324,7 +337,7 @@ function restoreProd() {
   console.log(
     `[codex-config] restored prod: plugins."bitfab@bitfab".enabled = true`,
   )
-  console.log(`[codex-config] disabled all internal/dev plugins`)
+  console.log(`[codex-config] disabled internal dev core; helpers stay enabled`)
 }
 
 function toggle(variant, mktName) {
@@ -368,7 +381,9 @@ function ensureTrust(projectPath) {
   console.log(`[codex-config] projects."${projectPath}".trust_level = trusted`)
 }
 
-if (cmd === "ensure-dev") {
+if (cmd === "ensure-install") {
+  ensureInstall(arg, arg2)
+} else if (cmd === "ensure-dev") {
   ensureDev(arg, arg2)
 } else if (cmd === "toggle") {
   toggle(arg, arg2)

@@ -133,8 +133,8 @@ echo "==> Publishing stable marketplace source to $STABLE_VENDOR_DIR"
 mkdir -p "$STABLE_VENDOR_DIR"
 rsync -a --delete "$VENDOR_DIR/" "$STABLE_VENDOR_DIR/"
 
-echo "==> Ensuring marketplaces.$MKT_NAME block in $CONFIG_TOML"
-node "$SCRIPT_DIR/codex-config.mjs" ensure-dev "$CONFIG_TOML" "$STABLE_VENDOR_DIR" "$MKT_NAME"
+echo "==> Registering marketplaces.$MKT_NAME with global production defaults"
+node "$SCRIPT_DIR/codex-config.mjs" ensure-install "$CONFIG_TOML" "$STABLE_VENDOR_DIR" "$MKT_NAME"
 
 # Wire the SessionStart auto-trigger so future Codex sessions in any worktree of
 # this repo re-run setup-worktree.sh (Claude gets this from .claude/settings.json;
@@ -147,5 +147,5 @@ node "$CACHE_DIR/dist/commands/status.js"
 
 echo
 echo "✅ Bitfab Codex dev build installed."
-echo "   To activate: $PLUGIN_DIR/scripts/toggle.sh dev"
-echo "   Then restart Codex."
+echo "   bitfab-dev and bitfab-accounts stay enabled in every checkout."
+echo "   To activate the dev core: $PLUGIN_DIR/scripts/toggle.sh dev, then restart Codex."

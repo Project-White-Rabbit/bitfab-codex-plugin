@@ -6,11 +6,10 @@
  *
  * Why this exists: Claude runs setup-worktree.sh every session via the repo's
  * committed .claude/settings.json SessionStart hook, so the per-worktree plugin
- * build stays current automatically. Codex has no repo-scoped session hook, so
- * the equivalent trigger has to live in the user-global hooks.json. The command
- * is self-guarding: it no-ops unless the session's cwd is a LINKED worktree
- * (git-common-dir != git-dir) of a repo that ships scripts/setup-worktree.sh, so
- * it never fires for the main checkout or for unrelated repos.
+ * build stays current automatically. Codex has no project-scoped plugin
+ * enablement, so this user hook selects the dev core in linked worktrees and
+ * the production core in main. Uniquely named helper plugins stay enabled in
+ * both modes.
  *
  * Usage:
  *   install-session-hook.mjs <hooksJsonPath>
@@ -29,11 +28,8 @@ if (!hooksPath) {
 // duplicate and we never touch Superset's or anyone else's hooks.
 const IDENTIFIER = "scripts/setup-worktree.sh"
 
-// In a worktree of this repo: build + install the per-worktree dev plugins
-// (prod off). In the main checkout of this repo: restore prod (and disable every
-// internal/dev plugin a prior worktree session left enabled). Anywhere else:
-// no-op. This keeps worktrees on dev and main on prod despite Codex's single
-// global config.
+// In a linked worktree, refresh the dev build. In main, restore only the
+// production core; helper plugins remain enabled in both modes.
 const COMMAND = [
   "sh -c '",
   'R="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0; ',
