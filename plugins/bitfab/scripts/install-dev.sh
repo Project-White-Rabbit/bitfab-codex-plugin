@@ -10,6 +10,16 @@
 
 set -euo pipefail
 
+IF_STALE=0
+if [ "${1:-}" = "--if-stale" ]; then
+  IF_STALE=1
+  shift
+fi
+if [ "$#" -gt 0 ]; then
+  echo "Usage: install-dev.sh [--if-stale]" >&2
+  exit 2
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$PLUGIN_DIR/.." && pwd)"
@@ -24,8 +34,66 @@ CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab/local"
 DEV_CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab-dev/local"
 ACCOUNTS_CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab-accounts/local"
 CONFIG_TOML="$CODEX_HOME/config.toml"
+SOURCE_HASH_STAMP="$STABLE_VENDOR_DIR/.source-hash"
+FRESHNESS_SCRIPT="$SCRIPT_DIR/dev-install-freshness.mjs"
+INSTALL_LOCK="$CODEX_HOME/bitfab/install-dev.lock"
+PROCESS_LOCK_SCRIPT="$REPO_ROOT/scripts/process-lock.sh"
 
 cd "$REPO_ROOT"
+
+if [ ! -f "$PROCESS_LOCK_SCRIPT" ]; then
+  echo "Missing process lock helper: $PROCESS_LOCK_SCRIPT" >&2
+  exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+source "$PROCESS_LOCK_SCRIPT"
+if ! process_lock_acquire "$INSTALL_LOCK" 1200 0.25; then
+  echo "Timed out waiting for another Codex plugin install to finish" >&2
+  exit 1
+fi
+cleanup_install_lock() {
+  process_lock_release "$INSTALL_LOCK"
+}
+trap cleanup_install_lock EXIT
+
+SOURCE_HASH="$(node "$FRESHNESS_SCRIPT" "$REPO_ROOT")"
+
+outputs_ready() {
+  [ -f "$STABLE_VENDOR_DIR/.agents/plugins/marketplace.json" ] \
+    && [ -f "$STABLE_VENDOR_DIR/plugins/bitfab/.codex-plugin/plugin.json" ] \
+    && [ -f "$CACHE_DIR/.codex-plugin/plugin.json" ] \
+    && [ -f "$CACHE_DIR/dist/commands/status.js" ] \
+    && { [ ! -d "$REPO_ROOT/bitfab-dev-codex-plugin/skills" ] \
+      || [ -f "$DEV_CACHE_DIR/.codex-plugin/plugin.json" ]; } \
+    && { [ ! -d "$REPO_ROOT/bitfab-accounts-codex-plugin/skills" ] \
+      || { [ -f "$ACCOUNTS_CACHE_DIR/.codex-plugin/plugin.json" ] \
+        && [ -f "$ACCOUNTS_CACHE_DIR/mcp.json" ]; }; }
+}
+
+OUTPUTS_READY=0
+if outputs_ready; then
+  OUTPUTS_READY=1
+fi
+
+# This is intentionally outside the rebuild gate: if hooks.json is deleted or
+# edited, the lightweight reconciliation must still self-heal it.
+node "$SCRIPT_DIR/install-session-hook.mjs" "$CODEX_HOME/hooks.json"
+
+if [ "$IF_STALE" = "1" ] \
+   && [ "$OUTPUTS_READY" = "1" ] \
+   && [ -f "$SOURCE_HASH_STAMP" ] \
+   && [ "$(tr -d '[:space:]' < "$SOURCE_HASH_STAMP")" = "$SOURCE_HASH" ]; then
+  echo "==> Codex plugin build inputs unchanged, skipping rebuild"
+  exit 0
+fi
+
+# The stamp represents a fully verified install. Clear it before any rebuild so
+# an interrupted forced install cannot make a partial output look current.
+rm -f "$SOURCE_HASH_STAMP"
+
+if [ -x "$REPO_ROOT/scripts/ensure-workspace-deps.sh" ]; then
+  "$REPO_ROOT/scripts/ensure-workspace-deps.sh" "$REPO_ROOT"
+fi
 
 echo "==> Building bitfab-flow"
 (cd bitfab-flow && pnpm build)
@@ -136,14 +204,12 @@ rsync -a --delete "$VENDOR_DIR/" "$STABLE_VENDOR_DIR/"
 echo "==> Registering marketplaces.$MKT_NAME with global production defaults"
 node "$SCRIPT_DIR/codex-config.mjs" ensure-install "$CONFIG_TOML" "$STABLE_VENDOR_DIR" "$MKT_NAME"
 
-# Wire the SessionStart auto-trigger so future Codex sessions in any worktree of
-# this repo re-run setup-worktree.sh (Claude gets this from .claude/settings.json;
-# Codex has no repo-scoped hook, so it lives in the user-global hooks.json).
-echo "==> Ensuring SessionStart worktree hook in $CODEX_HOME/hooks.json"
-node "$SCRIPT_DIR/install-session-hook.mjs" "$CODEX_HOME/hooks.json"
-
 echo "==> Verifying install"
 node "$CACHE_DIR/dist/commands/status.js"
+
+SOURCE_HASH_TMP="$SOURCE_HASH_STAMP.tmp.$$"
+printf '%s\n' "$SOURCE_HASH" > "$SOURCE_HASH_TMP"
+mv "$SOURCE_HASH_TMP" "$SOURCE_HASH_STAMP"
 
 echo
 echo "✅ Bitfab Codex dev build installed."

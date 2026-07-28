@@ -1,10 +1,12 @@
-import { execFileSync } from "node:child_process"
+import { execFile, execFileSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { promisify } from "node:util"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
+const execFileAsync = promisify(execFile)
 const SCRIPT = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "codex-config.mjs",
@@ -16,6 +18,10 @@ let vendor
 
 function run(...args) {
   execFileSync("node", [SCRIPT, ...args], { stdio: "pipe" })
+}
+
+function runAsync(...args) {
+  return execFileAsync("node", [SCRIPT, ...args])
 }
 
 function readConfig() {
@@ -445,6 +451,46 @@ describe("codex-config ensure-trust", () => {
     const first = readConfig()
     run("ensure-trust", configPath, "/work/tree/cooked-cave")
     expect(readConfig()).toBe(first)
+  })
+
+  it("preserves an existing config file mode", () => {
+    fs.writeFileSync(configPath, '[plugins."bitfab@bitfab"]\nenabled = true\n')
+    fs.chmodSync(configPath, 0o600)
+
+    run("ensure-trust", configPath, "/work/tree/cooked-cave")
+
+    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600)
+  })
+
+  it("writes through a symlink without replacing it", () => {
+    const targetPath = path.join(codexHome, "managed-config.toml")
+    fs.writeFileSync(targetPath, '[plugins."bitfab@bitfab"]\nenabled = true\n')
+    fs.symlinkSync(targetPath, configPath)
+
+    run("ensure-trust", configPath, "/work/tree/cooked-cave")
+
+    expect(fs.lstatSync(configPath).isSymbolicLink()).toBe(true)
+    expect(fs.readFileSync(targetPath, "utf8")).toContain(
+      '[projects."/work/tree/cooked-cave"]',
+    )
+  })
+
+  it("serializes concurrent config updates", async () => {
+    const lockPath = `${configPath}.lock`
+    fs.writeFileSync(lockPath, "")
+    const projects = Array.from(
+      { length: 12 },
+      (_, index) => `/work/tree/concurrent-${index}`,
+    )
+
+    await Promise.all(
+      projects.map((project) => runAsync("ensure-trust", configPath, project)),
+    )
+
+    const cfg = readConfig()
+    for (const project of projects) {
+      expect(cfg).toContain(`[projects."${project}"]`)
+    }
   })
 })
 

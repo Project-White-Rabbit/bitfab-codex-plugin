@@ -17,6 +17,7 @@
  *   codex-config.mjs toggle             <configPath> <dev|prod>   <marketplaceName>
  */
 
+import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 
@@ -44,6 +45,46 @@ if (!cmd || !configPath) {
   usage()
 }
 
+const lockPath = `${configPath}.lock`
+let lockFd
+
+// Session hooks from different worktrees share this config. Serialize the full
+// read-modify-write cycle so one session cannot discard another's trust/plugin
+// changes. The OS releases the advisory lock if the process terminates.
+function releaseLock() {
+  if (lockFd === undefined) {
+    return
+  }
+  fs.closeSync(lockFd)
+  lockFd = undefined
+}
+
+function acquireLock() {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true })
+  const waitState = new Int32Array(new SharedArrayBuffer(4))
+  lockFd = fs.openSync(lockPath, "a")
+  const command = process.platform === "darwin" ? "lockf" : "flock"
+  const args = command === "lockf" ? ["-s", "-t", "0", "3"] : ["-n", "3"]
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const result = spawnSync(command, args, {
+      stdio: ["ignore", "ignore", "ignore", lockFd],
+    })
+    if (result.error?.code === "ENOENT") {
+      releaseLock()
+      throw new Error(`Required process lock command not found: ${command}`)
+    }
+    if (result.status === 0) {
+      return
+    }
+    Atomics.wait(waitState, 0, 0, 25)
+  }
+  releaseLock()
+  throw new Error(`Timed out waiting for config lock ${lockPath}`)
+}
+
+acquireLock()
+process.on("exit", releaseLock)
+
 function readConfig() {
   if (!fs.existsSync(configPath)) {
     return ""
@@ -51,12 +92,43 @@ function readConfig() {
   return fs.readFileSync(configPath, "utf8")
 }
 
+function configWritePath() {
+  try {
+    if (!fs.lstatSync(configPath).isSymbolicLink()) {
+      return configPath
+    }
+    try {
+      return fs.realpathSync(configPath)
+    } catch {}
+    const target = fs.readlinkSync(configPath)
+    return path.isAbsolute(target)
+      ? target
+      : path.resolve(path.dirname(configPath), target)
+  } catch {
+    return configPath
+  }
+}
+
 function writeConfig(content) {
-  fs.mkdirSync(path.dirname(configPath), { recursive: true })
-  // Collapse the blank-line gaps left when sections are removed.
+  // Collapse gaps from removed sections and atomically replace the config so
+  // readers never observe a partial TOML document. Write through a symlink and
+  // preserve the target's mode so dotfile-managed or restricted configs keep
+  // their existing filesystem semantics.
   const tidy = content.replace(/\n{3,}/g, "\n\n")
   const ending = tidy.endsWith("\n") ? tidy : `${tidy}\n`
-  fs.writeFileSync(configPath, ending)
+  const writePath = configWritePath()
+  const tempPath = `${writePath}.tmp-${process.pid}-${Date.now()}`
+  let mode = 0o600
+  try {
+    mode = fs.statSync(writePath).mode & 0o777
+  } catch {}
+  fs.mkdirSync(path.dirname(writePath), { recursive: true })
+  try {
+    fs.writeFileSync(tempPath, ending, { mode })
+    fs.renameSync(tempPath, writePath)
+  } finally {
+    fs.rmSync(tempPath, { force: true })
+  }
 }
 
 function escapeRegex(s) {
