@@ -753,21 +753,21 @@ Set up **per-trace database snapshots for replay** so the team can re-run a hist
    When the status is `checking`, wait ~15 seconds before calling the tool again, do not hammer it. When it is `none` or `failed`, the user hasn't finished connecting (or it errored); re-surface the Integrations URL, give them a moment, then re-check. Only proceed once it reports `connected`.
 4. Update the replay script(s) from step 1 so the replayed function connects to the per-trace branch. Ground every edit in https://docs.bitfab.ai/db-branching.md and your SDK's `replay` / branch-accessor reference, fetch the page for the project's language first; the replay option and the accessor names differ per SDK.
 
-   1. **Turn branching on** by passing `dbBranch` to the replay call. Its presence is the switch, so an empty object enables branching with the mirror's own sizing. Use the form for the project's language:
+   1. **Turn branching on** by passing `dbBranch: true` to the replay call. That branches with the mirror's own sizing; pass an object instead only to tune the branch's compute or warm-up SQL. Use the form for the project's language:
 
    **TypeScript**: `dbBranch` on the replay options:
 
    ```ts
    const result = await client.replay("my-function", myInstrumentedFn, {
      limit: 10,
-     dbBranch: {},
+     dbBranch: true,
    })
    ```
 
    **Python**: `db_branch=`:
 
    ```python
-   result = client.replay(my_instrumented_fn, limit=10, db_branch={})
+   result = client.replay(my_instrumented_fn, limit=10, db_branch=True)
    ```
 
    **Ruby**: `db_branch:`:
@@ -777,7 +777,7 @@ Set up **per-trace database snapshots for replay** so the team can re-run a hist
      receiver, :my_method,
      trace_function_key: "my-function",
      limit: 10,
-     db_branch: {},
+     db_branch: true,
    )
    ```
 
