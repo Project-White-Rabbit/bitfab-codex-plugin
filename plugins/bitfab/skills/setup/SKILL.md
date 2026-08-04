@@ -96,77 +96,6 @@ Read `$ARGUMENTS` first. If its first token is exactly one of the mode names bel
 | `templates` | `templates` | Iterate on the span-rendering templates for one trace function. |
 | `analyze-repo` | `analyze-repo` | Non-interactively scan the repo, pick the top workflows to trace (default 5, or `limit=<n>`; optional free-text `guidance:` steers what to focus on), and upload a draft trace plan for each (no prompts, no code changes). |
 
-## Preamble
-
-**Run only when mode is `wizard`.**
-
-1. Render the block below **verbatim** as a single message, then continue straight to Login. Do **not** ask for confirmation, do **not** ask any extra questions, do **not** summarize in your own words.
-
-   ```
-   Bitfab captures what your AI code does, turns runs into reusable datasets, and verifies fixes by replaying them against real data.
-
-   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-   │   CODE   │───▶│  TRACES  │───▶│ DATASETS │───▶│ IMPROVE  │
-   │          │    │ (what it │    │(reusable │    │ (edit +  │
-   │          │    │   did)   │    │test set) │    │ verify)  │
-   └──────────┘    └──────────┘    └──────────┘    └──────────┘
-
-   Primitives
-     • Trace  , a recording of one workflow run (inputs, outputs, every step inside).
-                 Ground truth for what your code actually did.
-     • Dataset, a curated collection of traces (failures, a specific workflow, custom).
-                 The reusable test set your changes get measured against.
-     • Replay , a tool that re-runs a dataset through your current code.
-                 Turns production data into a ready-made regression test.
-
-   Setup runs in two phases:
-     1. LOGIN                , authenticate (15s, browser)
-     2. INSTRUMENT           , wrap workflows with tracing and generate their replay scripts
-   ```
-
-   Then proceed to Login.
-
-## Explain
-
-**Run only when mode is `explain`.**
-
-Explain what Bitfab is and how this skill is organized. Read-only, no authentication, no code changes, no Studio. Triggered explicitly by `$bitfab:setup explain` (or natural-language asks like "what is Bitfab" / "explain Bitfab").
-
-1. Render the overview below **verbatim** as a single message, then stop. Do **not** authenticate, scan the codebase, ask any questions, or take any further action, `explain` is purely informational.
-
-   ```
-   Bitfab captures what your AI code does, turns runs into reusable datasets, and verifies fixes by replaying them against real data.
-
-   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-   │   CODE   │───▶│  TRACES  │───▶│ DATASETS │───▶│ IMPROVE  │
-   │          │    │ (what it │    │(reusable │    │ (edit +  │
-   │          │    │   did)   │    │test set) │    │ verify)  │
-   └──────────┘    └──────────┘    └──────────┘    └──────────┘
-
-   Primitives
-     • Trace  , a recording of one workflow run (inputs, outputs, every step inside).
-                 Ground truth for what your code actually did.
-     • Dataset, a curated collection of traces (failures, a specific workflow, custom).
-                 The reusable test set your changes get measured against.
-     • Replay , a tool that re-runs a dataset through your current code.
-                 Turns production data into a ready-made regression test.
-
-   What you can run
-     $bitfab:setup            Login, then instrument workflows until done
-     $bitfab:setup explain    This overview (read-only)
-     $bitfab:setup login      Authenticate with Bitfab
-     $bitfab:setup instrument Wrap a new AI workflow with tracing
-     $bitfab:setup modify     Adjust what an existing trace captures
-     $bitfab:setup inspect    Diagnose + fix setup: auth, what's instrumented, SDK/plugin current, replay coverage, traces arriving
-     $bitfab:setup switch-org Switch which org the plugin reads and writes
-     $bitfab:setup view       Open one trace function's plan in the browser (read-only)
-     $bitfab:setup replay     Create or update replay scripts
-     $bitfab:setup templates  Change how a trace function's spans render
-     $bitfab:setup session-logs  Opt in/out of session log collection
-   ```
-
-   Then close with one line: to start tracing, run `$bitfab:setup`; to debug an existing setup, run `$bitfab:setup inspect`.
-
 ## Login
 
 **Run only when mode is `wizard`, `login` or `instrument`.**
@@ -212,6 +141,98 @@ Authenticate with Bitfab and retrieve the API key.
    ```bash
    node "${BITFAB_PLUGIN_DIR}/dist/commands/sessionLogConsent.js" set CONSENT
    ```
+
+## Explain
+
+**Run only when mode is `wizard` or `explain`.**
+
+Teach the two primitives the user has to instrument with. Read-only, no code changes, no Studio. Runs inside `wizard` (right after Login, before the approach question) and standalone via `$bitfab:setup explain` (or natural-language asks like "what is Bitfab" / "explain Bitfab"), which needs no authentication.
+
+1. Render the block below **verbatim** as a single message, as formatted markdown (do **not** wrap it in a code fence, do **not** reword it, and do **not** add a summary or an ASCII diagram). This is the education the rest of setup depends on: a user who does not understand `withSpan` and `replay` cannot make the per-method decisions instrumentation asks of them. Do **not** authenticate, scan the codebase, ask any questions, or edit anything here, in either mode.
+
+   ```markdown
+   **Purpose**
+
+   Bitfab's SDK captures each instrumented method's inputs, outputs, and surrounding context as a trace at runtime. During development, developers and coding agents can inject captured trace data and modify code execution at the per-method level to test AI features end-to-end.
+
+   **How to instrument**
+
+   Bitfab provides you a way to capture traces and replay them safely during development. The core primitives from the Bitfab SDK are:
+
+   - `withSpan(...)`
+   - `replay(...)`
+
+   `withSpan` captures traces and sends them to Bitfab by default. It serializes the inputs, outputs, and metadata of the method it wraps (or decorates) and sends them over the OTEL transport layer.
+
+   `replay` calls into your code and modifies the behavior of `withSpan` for each method it wraps (or decorates) in one of five ways:
+
+   1. Execute as normal
+   2. Pass in inputs from the recorded trace
+   3. Pass in modified inputs from the recorded trace
+   4. Skip execution and return outputs from the recorded trace
+   5. Skip execution and return modified outputs from the recorded trace
+   ```
+
+   If the user asks about a framework (or once one is detected later in setup), follow up by explaining how that framework maps onto the five cases above. The principles do not change; only the way it gets instrumented does.
+
+   **Unless the mode is `explain`:**
+
+   Stop there and continue to the *Approach* section. Do not render the mode menu below: mid-setup, a menu of other modes is noise.
+
+   **Only when the mode is `explain`:**
+
+   Follow the block above with this one, as a code block, exactly as laid out:
+
+   ```
+   What you can run
+     $bitfab:setup            Login, then instrument workflows until done
+     $bitfab:setup explain    This overview (read-only)
+     $bitfab:setup login      Authenticate with Bitfab
+     $bitfab:setup instrument Wrap a new AI workflow with tracing
+     $bitfab:setup modify     Adjust what an existing trace captures
+     $bitfab:setup inspect    Diagnose + fix setup: auth, what's instrumented, SDK/plugin current, replay coverage, traces arriving
+     $bitfab:setup switch-org Switch which org the plugin reads and writes
+     $bitfab:setup view       Open one trace function's plan in the browser (read-only)
+     $bitfab:setup replay     Create or update replay scripts
+     $bitfab:setup templates  Change how a trace function's spans render
+     $bitfab:setup session-logs  Opt in/out of session log collection
+   ```
+
+   then close with one line: to start tracing, run `$bitfab:setup`; to debug an existing setup, run `$bitfab:setup inspect`. Then stop.
+
+## Approach
+
+**Run only when mode is `wizard`.**
+
+Settle who does the instrumenting before any code is read or written. Runs once, in `wizard` mode only, after Login.
+
+1. The user is authenticated now. Ask the user to settle who does the instrumenting:
+   - **Question:** "Want me to walk you through instrumenting, or would you rather do it yourself?"
+
+   > A) **Walk me through it**: I drive the instrumentation end to end, checking with you at each decision *(recommended)* → step 2
+   > B) **I'll instrument myself**: hand over the docs and stop, no scanning, no code changes → step 3
+
+   Recommend **A** and say why in one line: it is the whole flow (SDK install, trace plan, spans, replay script) with a confirmation before anything is written. Ask this once; do not re-ask it later in the session.
+2. The user asked to be walked through it. **Before anything else** (before dispatching to the *Instrument* section, before a single probe or file read), render the content of the block below **verbatim** as formatted markdown: no code fence, no rewording, no additions.
+
+   ```markdown
+   **What's about to happen next**
+
+   - This wizard will guide Codex on how to use the Bitfab plugin to analyze your repository. Codex will then instrument your AI features and write a `replay` script using the Bitfab SDK.
+   - Whenever Codex needs your input, it will prompt you
+   - Setup takes about 10 - 17 minutes depending on how many features you want to instrument and how complex your AI features are.
+   ```
+
+   This is the user's only warning about what the skill is about to do to their repository and how long it takes. It has to reach them between saying "walk me through it" and the next question they get asked, so nothing, not the language detection, not the existing-usage report, may come first.
+
+   Then go to the *Instrument* section and start at its first step. The guided path ends here: do **not** continue into the self-serve handoff that follows, which belongs to option B and tells you to stop.
+3. The user is instrumenting on their own. Give them the pointers below in one short message, then **stop**: do not scan the codebase, read files, or edit anything.
+
+   - **Docs:** https://docs.bitfab.ai, start with the SDK guide for their language (`/typescript-sdk`, `/python-sdk`, `/ruby-sdk`, `/go-sdk`); each one covers install, initialization, wrapping a workflow, and (outside Go) the replay script. Name the language's page directly if the project's language is already obvious from the conversation; do not go read the repo to find out.
+   - **API key:** their app needs `BITFAB_API_KEY` set in the environment it runs in before any trace will arrive. Tell them to get the key from the Bitfab MCP's `get_bitfab_api_key` tool. Do **not** call it yourself, and never print a key.
+   - **Coming back:** `$bitfab:setup` picks this flow back up, and `$bitfab:setup inspect` diagnoses an instrumentation they wrote themselves (auth, what's instrumented, whether traces are arriving).
+
+   Then go to the *Cleanup* section and end the run there. Option B is a full stop: do **not** read on into the sections that follow, the *Instrument* section included, and do not scan or edit anything on the way out.
 
 ## Session Logs
 
