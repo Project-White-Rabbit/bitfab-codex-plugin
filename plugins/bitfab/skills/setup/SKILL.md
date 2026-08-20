@@ -127,6 +127,12 @@ Authenticate with Bitfab and retrieve the API key.
 
    If `login.js` exits non-zero or the 10-minute timeout elapsed, report the error to the user and stop.
 3. Call `mcp__Bitfab__get_bitfab_api_key` to retrieve the API key, **NEVER print or log the full key**. Stored at `~/.config/bitfab/credentials.json`, used for the `BITFAB_API_KEY` environment variable.
+
+   **If `mcp__Bitfab__get_bitfab_api_key` is not available in this session**, the MCP server is switched off, not broken: it ships inside this plugin, so an absent tool is a setting rather than a failed install. Say so and hand the user the fix below; do not diagnose further, and do not fall back to drafting anything by hand.
+
+   Tell them to re-enable the Bitfab MCP server in their editor's MCP settings, then re-run this skill.
+
+   Then **stop**, the same way a failed login stops. Do not fall through to the remaining steps: every phase after this one needs these tools, so continuing only moves the failure further from its cause.
 4. Check whether session log consent has already been recorded:
 
    ```bash
