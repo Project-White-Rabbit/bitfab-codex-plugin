@@ -32,6 +32,13 @@ function setupEnv() {
   }
 }
 
+function runSetup(mode, worktree) {
+  return execFileSync("bash", [SCRIPT, mode, worktree], {
+    env: setupEnv(),
+    stdio: "pipe",
+  }).toString()
+}
+
 function createLinkedWorktree() {
   fs.writeFileSync(path.join(tmp, "README.md"), "fixture\n")
   execFileSync("git", ["-C", tmp, "add", "README.md"])
@@ -129,9 +136,7 @@ afterEach(() => {
 
 describe("setup-worktree lifecycle", () => {
   it("skips portable setup in the main repository", () => {
-    const output = execFileSync("bash", [SCRIPT, "--session", tmp], {
-      env: setupEnv(),
-    }).toString()
+    const output = runSetup("--session", tmp)
 
     expect(output).toContain("main repo, skipping portable core")
     expect(fs.existsSync(callsPath)).toBe(false)
@@ -140,9 +145,7 @@ describe("setup-worktree lifecycle", () => {
   it("never runs creation setup during a linked-worktree session", () => {
     createLinkedWorktree()
 
-    const output = execFileSync("bash", [SCRIPT, "--session", linkedWorktree], {
-      env: setupEnv(),
-    }).toString()
+    const output = runSetup("--session", linkedWorktree)
 
     expect(output).toContain("session mode, skipping creation setup")
     expect(fs.existsSync(callsPath)).toBe(false)
@@ -153,6 +156,7 @@ describe("setup-worktree lifecycle", () => {
 
     const output = execFileSync("bash", [SCRIPT, linkedWorktree], {
       env: setupEnv(),
+      stdio: "pipe",
     }).toString()
 
     expect(output).toContain("session mode, skipping creation setup")
@@ -166,9 +170,7 @@ describe("setup-worktree lifecycle", () => {
       "DATABASE_URL='postgresql://owner:password@ep-main-branch.us-west-2.aws.neon.tech/neondb'\n",
     )
 
-    const output = execFileSync("bash", [SCRIPT, "--all", linkedWorktree], {
-      env: setupEnv(),
-    }).toString()
+    const output = runSetup("--all", linkedWorktree)
 
     expect(output).toContain("rewrote DATABASE_URL")
     expect(output).not.toContain("session mode, skipping creation setup")
@@ -184,9 +186,7 @@ describe("setup-worktree lifecycle", () => {
       "DATABASE_URL='postgresql://owner:password@ep-main-branch.us-west-2.aws.neon.tech/neondb'\n",
     )
 
-    const first = execFileSync("bash", [SCRIPT, "--create", linkedWorktree], {
-      env: setupEnv(),
-    }).toString()
+    const first = runSetup("--create", linkedWorktree)
 
     expect(first).toContain("creation setup complete")
     expect(fs.readFileSync(callsPath, "utf8")).toContain(
@@ -194,9 +194,7 @@ describe("setup-worktree lifecycle", () => {
     )
 
     fs.rmSync(callsPath, { force: true })
-    const second = execFileSync("bash", [SCRIPT, "--create", linkedWorktree], {
-      env: setupEnv(),
-    }).toString()
+    const second = runSetup("--create", linkedWorktree)
 
     expect(second).toContain("creation setup complete")
     expect(fs.readFileSync(callsPath, "utf8")).toContain(
@@ -209,20 +207,14 @@ describe("setup-worktree lifecycle", () => {
     configureSuccessfulNeon()
     writeWorktreeEnv()
 
-    expect(() =>
-      execFileSync("bash", [SCRIPT, "--create", linkedWorktree], {
-        env: setupEnv(),
-      }),
-    ).toThrow()
+    expect(() => runSetup("--create", linkedWorktree)).toThrow()
 
     writeWorktreeEnv(
       "DATABASE_URL='postgresql://owner:password@ep-main-branch.us-west-2.aws.neon.tech/neondb'\n",
     )
     fs.rmSync(callsPath, { force: true })
 
-    const retry = execFileSync("bash", [SCRIPT, "--create", linkedWorktree], {
-      env: setupEnv(),
-    }).toString()
+    const retry = runSetup("--create", linkedWorktree)
 
     expect(retry).toContain("creation setup complete")
     expect(fs.readFileSync(callsPath, "utf8")).toContain(
@@ -243,9 +235,7 @@ describe("setup-worktree lifecycle", () => {
       "DATABASE_URL='postgresql://owner:password@ep-main-branch.us-west-2.aws.neon.tech/neondb'\n",
     )
 
-    const output = execFileSync("bash", [SCRIPT, "--create", linkedWorktree], {
-      env: setupEnv(),
-    }).toString()
+    const output = runSetup("--create", linkedWorktree)
     const calls = fs.readFileSync(callsPath, "utf8")
 
     expect(output).toContain("dev API keys ensured")
