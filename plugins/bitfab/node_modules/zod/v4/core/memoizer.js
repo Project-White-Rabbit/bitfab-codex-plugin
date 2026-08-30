@@ -27,25 +27,102 @@ function isRecursive(inst, stack) {
             result = true;
     };
     const def = inst._zod.def;
-    if (def.type === "lazy") {
-        check(inst._zod.innerType);
-    }
-    else {
-        // $ZodObject redefines `shape` as a non-enumerable accessor, so `for...in` misses it.
-        const shape = def.shape;
-        // `for...in` skips symbols, so a cycle through a declared symbol key would read as non-recursive
-        if (shape)
-            for (const key of Reflect.ownKeys(shape))
-                check(shape[key]);
-        for (const key in def) {
-            const value = def[key];
-            if (!value || typeof value !== "object")
-                continue;
-            if (value._zod)
-                check(value);
-            else if (Array.isArray(value))
-                for (const el of value)
-                    check(el);
+    const kind = def.type;
+    switch (kind) {
+        case "object": {
+            // `Reflect.ownKeys` rather than `Object.keys`, so a cycle through a declared symbol key is still seen
+            for (const key of Reflect.ownKeys(def.shape))
+                check(def.shape[key]);
+            check(def.catchall);
+            break;
+        }
+        case "array":
+            check(def.element);
+            break;
+        case "tuple":
+            for (const el of def.items)
+                check(el);
+            check(def.rest);
+            break;
+        case "record":
+        case "map":
+            check(def.keyType);
+            check(def.valueType);
+            break;
+        case "set":
+            check(def.valueType);
+            break;
+        case "union":
+            for (const el of def.options)
+                check(el);
+            break;
+        case "intersection":
+            check(def.left);
+            check(def.right);
+            break;
+        case "optional":
+        case "nullable":
+        case "default":
+        case "prefault":
+        case "catch":
+        case "readonly":
+        case "nonoptional":
+        case "promise":
+        case "success":
+            check(def.innerType);
+            break;
+        case "pipe":
+            check(def.in);
+            check(def.out);
+            break;
+        case "function":
+            check(def.input);
+            check(def.output);
+            break;
+        // reading `_zod.innerType` resolves the getter once and caches it
+        case "lazy":
+            check(inst._zod.innerType);
+            break;
+        // a leaf by choice: `parts` are regex fragments, not data positions
+        case "template_literal":
+        // leaves
+        case "string":
+        case "number":
+        case "int":
+        case "boolean":
+        case "bigint":
+        case "symbol":
+        case "undefined":
+        case "null":
+        case "void":
+        case "never":
+        case "any":
+        case "unknown":
+        case "date":
+        case "nan":
+        case "enum":
+        case "literal":
+        case "file":
+        case "transform":
+        case "custom":
+            break;
+        default: {
+            // a new built-in kind becomes a compile error here
+            kind;
+            // a user-defined kind can still hold children, and only its author knows where, so fall back to scanning the def — skipping accessors, since reading one can run user code
+            for (const key in def) {
+                const desc = Object.getOwnPropertyDescriptor(def, key);
+                if (!desc || desc.get)
+                    continue;
+                const value = desc.value;
+                if (!value || typeof value !== "object")
+                    continue;
+                if (value._zod)
+                    check(value);
+                else if (Array.isArray(value))
+                    for (const el of value)
+                        check(el);
+            }
         }
     }
     stack.delete(inst);
