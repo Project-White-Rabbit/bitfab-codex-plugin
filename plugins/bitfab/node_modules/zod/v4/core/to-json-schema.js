@@ -39,6 +39,7 @@ export function initializeContext(params) {
         cycles: params?.cycles ?? "ref",
         reused: params?.reused ?? "inline",
         intersections: [],
+        deferred: [],
         external: params?.external ?? undefined,
     };
 }
@@ -472,6 +473,8 @@ export function finalize(ctx, schema) {
                 compactTypeUnion(entry[1].def ?? entry[1].schema);
             }
         }
+        for (const rewrite of ctx.deferred)
+            rewrite();
         // After flattening, every member that was extracted is a `$ref`, so the fold sees the final shape. A schema that inherits an intersection — through `z.lazy`, or any `ref` chain — holds the same `allOf` array, so fold by array identity to catch every copy.
         if (ctx.intersections.length) {
             const carriers = new Map();

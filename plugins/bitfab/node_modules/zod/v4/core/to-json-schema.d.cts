@@ -115,6 +115,8 @@ export interface ToJSONSchemaContext {
     reused: "ref" | "inline";
     /** The `allOf` array of each intersection encountered during traversal, innermost first. `finalize` folds every emitted object holding one; see `foldIntersection`. */
     intersections: JSONSchema.BaseSchema[][];
+    /** Rewrites a processor deferred to `finalize`, where the flatten has resolved every ref and the union branches are in place. */
+    deferred: (() => void)[];
     external?: {
         registry: $ZodRegistry<{
             id?: string | undefined;
