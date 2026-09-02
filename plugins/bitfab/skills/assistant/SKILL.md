@@ -126,7 +126,7 @@ Read `$ARGUMENTS` first. If its first token is exactly one of the mode names bel
 
 **Run only when mode is `wizard`, `dataset`, `experiment`, `cost-optimize`, `investigate`, `benchmark`, `replay` or `fix`.**
 
-0. First, resolve `BITFAB_PLUGIN_DIR` if it isn't already exported in this shell. Run this block verbatim, it auto-detects dev / prod / custom-`CODEX_HOME` installs:
+0. First, resolve `BITFAB_PLUGIN_DIR` if it isn't already exported in this shell. Run this block verbatim, it auto-detects whichever install is active:
 
    ```bash
    if [ -z "$BITFAB_PLUGIN_DIR" ]; then

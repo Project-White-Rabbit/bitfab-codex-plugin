@@ -39,20 +39,22 @@ This skill has twelve phases: **explain**, **login**, **session-logs**, **instru
 
 When instrumenting a workflow, **its instrumentation and replay pipeline are written together in the same cycle** once the trace plan is confirmed (see Instrument's write-instrumentation step). The standalone `replay` mode remains available for coverage-verification and backfill.
 
-**Before running plugin commands below**, resolve `BITFAB_PLUGIN_DIR` in the shell. Codex does not inject a plugin-root env var, so you must determine it. Copy and run this block verbatim, it auto-detects whichever install is active (dev, prod, or a custom `CODEX_HOME`):
+**Before running plugin commands below**, resolve `BITFAB_PLUGIN_DIR` in the shell. Codex does not inject a plugin-root env var, so you must determine it. Copy and run this block verbatim, it auto-detects whichever install is active:
 
 ```bash
-BITFAB_PLUGIN_DIR=$(
-  hit=$(find "${CODEX_HOME:-$HOME/.codex}/plugins/cache" -maxdepth 6 -type f -name status.js \
-    \( -path '*/bitfab-internal/bitfab/local/dist/commands/*' \
-    -o -path '*/bitfab/bitfab/*/dist/commands/*' \) 2>/dev/null | head -1)
-  echo "${hit%/dist/commands/status.js}"
-)
-export BITFAB_PLUGIN_DIR
-test -n "$BITFAB_PLUGIN_DIR" && echo "Found: $BITFAB_PLUGIN_DIR" || echo "ERROR: Bitfab plugin not installed"
+if [ -z "$BITFAB_PLUGIN_DIR" ]; then
+  BITFAB_PLUGIN_DIR=$(
+    hit=$(find "${CODEX_HOME:-$HOME/.codex}/plugins/cache" -maxdepth 6 -type f -name status.js \
+      \( -path '*/bitfab-internal/bitfab/local/dist/commands/*' \
+      -o -path '*/bitfab/bitfab/*/dist/commands/*' \) 2>/dev/null | head -1)
+    echo "${hit%/dist/commands/status.js}"
+  )
+  export BITFAB_PLUGIN_DIR
+fi
+test -n "$BITFAB_PLUGIN_DIR" || { echo "ERROR: Bitfab plugin not installed"; exit 1; }
 ```
 
-If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't installed the plugin yet, stop and tell them to add the marketplace. Otherwise proceed. The cache path includes a trailing `local` for dev installs and `<version>` for prod installs; the commands live at `$BITFAB_PLUGIN_DIR/dist/commands/*.js`.
+If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't installed the plugin yet, stop and tell them to install it. Otherwise proceed. The commands live at `$BITFAB_PLUGIN_DIR/dist/commands/*.js`.
 
 **SDK reference:** https://docs.bitfab.ai is the source of truth for SDK install, initialization, API surface, and replay. Every docs path below ends in `.md`: that suffix returns the page as plain markdown (no HTML chrome), so fetch the URLs exactly as written. Fetch in this order before writing any code, do not improvise from memory:
 - **Canonical API surface (preferred for agents):** the dense reference pages at `/reference/typescript.md`, `/reference/python.md`, `/reference/ruby.md`, `/reference/go.md`. These list every public export, signature, type, default, and error semantic, no tutorials, no prose. Read these first.
@@ -1021,7 +1023,7 @@ Templates control how a span's input / output renders in the Bitfab UI. They are
 
 **Run only when mode is `analyze-repo`.**
 
-**This whole phase is non-interactive.** Never ask the user a question (never emit an `AskUserQuestion` call), never open Studio, never edit code, and never write a replay registry module. This host shares one tool set across every setup mode, so there is no per-mode permission split here: honoring non-interactivity is on you, run to completion autonomously and never wait for a human. Run it start to finish on your own and end with a printed report. The deliverable is a set of **draft trace plans** uploaded to Bitfab (unconfirmed) that the user can review and confirm later in Studio via `$bitfab:setup view`. If anything blocks you (no auth, no valid candidates), stop and say so plainly rather than prompting.
+**This whole phase is non-interactive.** Never ask the user a question, never open Studio, never edit code, and never write a replay registry module. This host shares one tool set across every setup mode, so there is no per-mode permission split here: honoring non-interactivity is on you, run to completion autonomously and never wait for a human. Run it start to finish on your own and end with a printed report. The deliverable is a set of **draft trace plans** uploaded to Bitfab (unconfirmed) that the user can review and confirm later in Studio via `$bitfab:setup view`. If anything blocks you (no auth, no valid candidates), stop and say so plainly rather than prompting.
 
 1. **First, confirm authentication non-interactively.** Call `mcp__Bitfab__get_bitfab_api_key` to retrieve the API key for the plugin's active org. If it returns a key, hold it and continue. If it errors or returns no key, **STOP the whole phase immediately**: this mode cannot run the interactive login (that needs a browser/Studio round-trip). Tell the user to run `$bitfab:setup login` first, then re-run `$bitfab:setup analyze-repo`. Do not prompt, do not retry, do not fall through to scanning.
 
@@ -1051,7 +1053,7 @@ Templates control how a span's input / output renders in the Bitfab UI. They are
    - If the only cleanly *replayable* boundary would require a **refactor** (extracting/exporting a new function, restructuring call sites), do NOT drop the candidate: plan a **coarser, purely-additive** boundary at the nearest existing function (a root-only span, or a framework handler root) even if its inputs aren't fully serializable, and note in the final report that it needs an interactive `$bitfab:setup instrument` pass to become cleanly replayable. Only **drop** a candidate when there is **no** additive boundary at all - nothing importable or wrappable without editing code. Aim to upload every one of the N selected; dropping should be rare.
 
    If **zero** valid candidates remain, skip to step 5 and say so.
-4. For **each** candidate selected in step 3, build a `TracePlanTree` and upload it with `mcp__Bitfab__save_trace_plan`. This is the same plan construction as an interactive run, **minus the browser confirmation**: do NOT run `openTracePlan.js`, do NOT open Studio, and do NOT ask the user to confirm the plan (no `AskUserQuestion`, skipping the presentation described in the Reference section). Consult the **Trace Plan Format** and **Trace Plan Accuracy** rules in the Reference section below for span-type vocabulary and the tree grammar. Read each candidate's root signature (and any function whose parameter names or return fields the plan references) before building its tree; never guess names.
+4. For **each** candidate selected in step 3, build a `TracePlanTree` and upload it with `mcp__Bitfab__save_trace_plan`. This is the same plan construction as an interactive run, **minus the browser confirmation**: do NOT run `openTracePlan.js`, do NOT open Studio, and do NOT ask the user to confirm the plan (skipping the presentation described in the Reference section). Consult the **Trace Plan Format** and **Trace Plan Accuracy** rules in the Reference section below for span-type vocabulary and the tree grammar. Read each candidate's root signature (and any function whose parameter names or return fields the plan references) before building its tree; never guess names.
 
    Build each plan under the same hard constraint as Instrument: **the tree must describe purely-additive instrumentation.** If a shape would require a behavior change to nest correctly (awaiting a stream that wasn't awaited, reordering calls, blocking a callback), pick a flatter tree (siblings, or fewer captured nodes) instead. For callback-handler SDKs (LangGraph / LangChain, Claude Agent SDK, or Vercel AI SDK) use a handler-only or hybrid plan; for trace-processor SDKs default to a hybrid plan with a keyed root that carries the run input.
 
