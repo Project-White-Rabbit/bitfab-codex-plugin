@@ -1388,7 +1388,7 @@ Reached only from `replay` mode. The user already has a trace ID and (usually) a
 
    **Both sub-steps run without user interaction. No questions, just execute.**
 
-   **1. Read the trace (and resolve the function key).** Call `mcp__Bitfab__get_traces` with the trace ID argument and `scope: "full"`. Hold the trace's label, annotation, inputs, and output in context, these are the acceptance criteria for the verdict. **If the user gave only a trace ID and no function key** (common with free-form requests like "did my fix work on `<id>`"), take the trace function key from the trace itself, don't ask the user for it.
+   **1. Read the trace (and resolve the function key).** Call `mcp__Bitfab__get_traces` with the trace ID argument and `scope: "full"`. Hold the trace's label, annotation, inputs, and output in context, these are the acceptance criteria for the verdict. **If the user gave only a trace ID and no function key** (common with free-form requests like "did my fix work on `<id>`"), take the trace function key from the trace itself, don't ask the user for it. **Decide whether this is a re-seed rather than a replay:** the user said re-seed, or asked for the trace to be run again for real, or the trace errored (`hasError` / an error on its root span) and the user wants a good recording of it. A re-seed is not a replay: it runs the function once on the trace's recorded inputs and records the result under the same trace id, with nothing mocked and no experiment. It takes the `reseed` step instead of `run`.
 
    **2. Find the replay script.** Search for files matching `scripts/replay.*`, `scripts/*replay*`, or any file importing `bitfab.replay` / `client.replay`, and confirm it covers that trace function key. (You don't need to grep for capability flags here, this minimal path doesn't use code-change payloads or experiment groups. It does persist the verdict in the `verdict` step, straight from the replay output's server trace id, with no extra script capability required.)
 
@@ -1401,6 +1401,7 @@ Reached only from `replay` mode. The user already has a trace ID and (usually) a
 
    The SDK fails a selected mock closed when its historical tree or occurrence is unavailable, but that protects only calls that pass this check. Hold `replaySafetyVerified = true` only after every unsafe action passes it.
 
+   - **the user asked for a re-seed, or the trace errored and wants a real run recorded**: re-seed the trace in place instead of replaying it; a re-seed runs unsafe actions on purpose, so the safety check's findings are carried into that step for an explicit go-ahead rather than stopping here → step 5
    - **the replay safety check finds any uncovered or unmockable unsafe action**: report the exact call and why replay interception cannot cover it, then stop without executing replay → step 1 of the Cleanup phase
    - **replay script found and trace readable**: continue to run the replay → step 2
    - **no replay script found for this function**: tell the user: "No replay script found for `<key>`. Run `$bitfab:setup replay <key>` to create one, then re-run this command." Stop the flow → step 1 of the Cleanup phase
@@ -1475,6 +1476,22 @@ Reached only from `replay` mode. The user already has a trace ID and (usually) a
    > A) **Iterate**: make another change and re-replay the same trace → step 4
    > B) **Done** *(recommended)* → step 1 of the Cleanup phase
 4. **Make another change before re-replaying.** Ask what to change, or let the user describe the fix. Edit the code, then loop back to run the replay again. If the user says they'll make the change themselves, wait for their message, then proceed.
+5. **Studio activity:** If `studioMode` is true, run `node "${BITFAB_PLUGIN_DIR}/dist/commands/pushActivity.js" started "Re-seeding"`.
+
+   **Run the trace again for real and record the result under the same id.** A re-seed is a seed, not a replay: nothing is mocked, no test run or experiment is created, and the trace keeps its id, labels, assertions, dataset membership, name, and metadata. The previous run is kept as its own trace, linked back to this one, so nothing is deleted.
+
+   **It runs the function exactly as production does, side effects included.** If the safety check in `setup` found any unsafe action (an email, a payment, a write to a live system), say exactly which call would run for real and get an explicit go-ahead before continuing; a re-seed has no mocking to hide behind.
+
+   Find the registry the replay script hands to `--registry` (a `bitfab-replay --registry <path>` line in the script, `package.json`, or `pyproject.toml`) and the pipeline name in it that covers the function key. Then run the SDK's seed command through that registry, with no other flags:
+
+   ```bash
+   # TypeScript: cd <project-dir> && npx bitfab-seed --registry <registry-path> <pipeline> --from-trace <trace-id>
+   # Python:     cd <project-dir> && bitfab-seed --registry <registry-path> <pipeline> --from-trace <trace-id>   (or uv run / poetry run)
+   ```
+
+   The Ruby SDK has no seed command yet; tell the user so and stop. If the command is missing or rejects `--from-trace`, the SDK predates re-seeding: ask the user to upgrade it, and do not fall back to a replay, which would record an experiment rather than refresh the trace.
+
+   Read the JSON result. `reseeded[0].traceId` is the trace the user gave, now holding the fresh run, and `reseeded[0].previousRunTraceId` is where the old run went. Report one line: "Re-seeded `<trace id, 8 chars>`: it now holds a fresh run of the same inputs; the previous run is kept as `<previous id, 8 chars>`. Its graders re-run on the next pass." If the function threw, the trace is untouched: report the error the run produced and stop, since a re-seed only adopts a run that completed.
 
 ## Phase 6: Validate & Wrap Up
 
