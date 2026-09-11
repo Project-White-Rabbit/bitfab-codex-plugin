@@ -22,6 +22,8 @@ This skill has eleven phases: **explain**, **login**, **session-logs**, **instru
 
 When instrumenting a workflow, **its instrumentation and replay pipeline are written together in the same cycle** after the workflow is selected (see Instrument's write-instrumentation step). The standalone `replay` mode remains available for coverage-verification and backfill.
 
+**Preserve the project's capture opt-out.** When initialization sets `captureEnabled: false` / `capture_enabled=False`, keep framework handlers, processors, callbacks, middleware, and wrappers installed so the application continues to run normally, but verify that ordinary execution produces no client-owned records, including local BAML calls. Replay and seed modes are explicit recording operations and continue to produce records. Never "fix" an opt-out by removing an integration or preventing the wrapped framework call from running.
+
 **Before running plugin commands below**, resolve `BITFAB_PLUGIN_DIR` in the shell. Codex does not inject a plugin-root env var, so you must determine it. Copy and run this block verbatim, it auto-detects whichever install is active:
 
 ```bash
