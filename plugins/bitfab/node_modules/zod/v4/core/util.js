@@ -725,10 +725,6 @@ export function members(proto, table) {
         else
             defineBound(proto, key, desc.value);
     }
-    // for..in sees no symbol keys, so well-known members like Symbol.iterator install here
-    for (const sym of Object.getOwnPropertySymbols(table)) {
-        defineBound(proto, sym, table[sym]);
-    }
 }
 /** Shadows a prototype member with an own value, so a getter that builds from the instance runs once. */
 export function own(inst, key, value, enumerable = true) {
