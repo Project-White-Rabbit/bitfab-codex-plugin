@@ -40,6 +40,7 @@ beforeEach(() => {
   fs.mkdirSync(path.join(vendor, "plugins", "bitfab-accounts"), {
     recursive: true,
   })
+  fs.mkdirSync(path.join(vendor, "plugins", "gtm"), { recursive: true })
 })
 
 afterEach(() => {
@@ -60,6 +61,7 @@ describe("codex-config ensure-install (stable shim)", () => {
     expect(cfg).toContain(
       '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
     )
+    expect(cfg).toContain('[plugins."gtm@bitfab-internal"]\nenabled = true')
   })
 
   it("keeps the global production plugin enabled", () => {
@@ -107,6 +109,9 @@ describe("codex-config ensure-install (stable shim)", () => {
         '[plugins."bitfab-accounts@bitfab-internal"]',
         "enabled = false",
         "",
+        '[plugins."gtm@bitfab-internal"]',
+        "enabled = false",
+        "",
       ].join("\n"),
     )
     run("ensure-install", configPath, vendor, "bitfab-internal")
@@ -119,6 +124,7 @@ describe("codex-config ensure-install (stable shim)", () => {
     expect(cfg).toContain(
       '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
     )
+    expect(cfg).toContain('[plugins."gtm@bitfab-internal"]\nenabled = true')
     expect(fs.existsSync(stableCache)).toBe(true)
   })
 
@@ -140,6 +146,9 @@ describe("codex-config ensure-install (stable shim)", () => {
         '[plugins."bitfab-accounts@bitfab-dev"]',
         "enabled = true",
         "",
+        '[plugins."gtm@bitfab-dev"]',
+        "enabled = true",
+        "",
       ].join("\n"),
     )
     run("ensure-install", configPath, vendor, "bitfab-internal")
@@ -150,6 +159,7 @@ describe("codex-config ensure-install (stable shim)", () => {
     // marketplace that no longer exists.
     expect(cfg).not.toContain('"bitfab-dev@bitfab-dev"')
     expect(cfg).not.toContain('"bitfab-accounts@bitfab-dev"')
+    expect(cfg).not.toContain('"gtm@bitfab-dev"')
     expect(fs.existsSync(legacyCache)).toBe(true)
   })
 
@@ -171,6 +181,9 @@ describe("codex-config ensure-install (stable shim)", () => {
         "enabled = true",
         "",
         '[plugins."bitfab-accounts@bitfab-internal-dead"]',
+        "enabled = true",
+        "",
+        '[plugins."gtm@bitfab-internal-dead"]',
         "enabled = true",
         "",
       ].join("\n"),
@@ -201,6 +214,9 @@ describe("codex-config ensure-install (stable shim)", () => {
         '[plugins."bitfab-accounts@bitfab-internal-orphan"]',
         "enabled = true",
         "",
+        '[plugins."gtm@bitfab-internal-orphan"]',
+        "enabled = true",
+        "",
       ].join("\n"),
     )
     run("ensure-install", configPath, vendor, "bitfab-internal")
@@ -224,6 +240,9 @@ describe("codex-config ensure-install (stable shim)", () => {
         "enabled = false",
         "",
         '[plugins."bitfab-accounts@bitfab-internal-nested".mcp_servers.notion.tools.notion-search]',
+        "enabled = false",
+        "",
+        '[plugins."gtm@bitfab-internal-nested".mcp_servers.playwright.tools.browser_click]',
         "enabled = false",
         "",
       ].join("\n"),
@@ -271,11 +290,17 @@ describe("codex-config ensure-install (stable shim)", () => {
           '[plugins."bitfab-accounts@bitfab-internal-wt-b"]',
           "enabled = true",
           "",
+          '[plugins."gtm@bitfab-internal-wt-b"]',
+          "enabled = true",
+          "",
           '[hooks.state."bitfab@bitfab-internal-wt-b:hooks/hooks.json:session_start:0:0"]',
           'trusted_hash = "sha256:test"',
           "",
           '[hooks.state."bitfab-accounts@bitfab-internal-wt-b:hooks/hooks.json:session_start:0:0"]',
           'trusted_hash = "sha256:accounts"',
+          "",
+          '[hooks.state."gtm@bitfab-internal-wt-b:hooks/hooks.json:session_start:0:0"]',
+          'trusted_hash = "sha256:gtm"',
           "",
         ].join("\n"),
       )
@@ -284,8 +309,10 @@ describe("codex-config ensure-install (stable shim)", () => {
       expect(cfg).not.toContain("[marketplaces.bitfab-internal-wt-b]")
       expect(cfg).not.toContain("bitfab-dev@bitfab-internal-wt-b")
       expect(cfg).not.toContain("bitfab-accounts@bitfab-internal-wt-b")
+      expect(cfg).not.toContain("gtm@bitfab-internal-wt-b")
       expect(cfg).not.toContain("bitfab@bitfab-internal-wt-b:hooks")
       expect(cfg).not.toContain("bitfab-accounts@bitfab-internal-wt-b:hooks")
+      expect(cfg).not.toContain("gtm@bitfab-internal-wt-b:hooks")
       expect(fs.existsSync(siblingCache)).toBe(true)
       // Helpers stay globally available while the dev core stays off.
       expect(cfg).toContain(
@@ -294,6 +321,7 @@ describe("codex-config ensure-install (stable shim)", () => {
       expect(cfg).toContain(
         '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
       )
+      expect(cfg).toContain('[plugins."gtm@bitfab-internal"]\nenabled = true')
     } finally {
       fs.rmSync(sibling, { recursive: true, force: true })
     }
@@ -311,6 +339,9 @@ describe("codex-config ensure-install (stable shim)", () => {
         "",
         '[hooks.state."bitfab-accounts@bitfab-internal-wt-b:hooks/hooks.json:session_start:0:0"]',
         'trusted_hash = "sha256:accounts"',
+        "",
+        '[hooks.state."gtm@bitfab-internal-wt-b:hooks/hooks.json:session_start:0:0"]',
+        'trusted_hash = "sha256:gtm"',
         "",
       ].join("\n"),
     )
@@ -401,6 +432,30 @@ describe("codex-config ensure-install (stable shim)", () => {
     run("ensure-install", configPath, vendor, "bitfab-internal")
     expect(readConfig()).not.toContain("bitfab-accounts@bitfab-internal")
   })
+
+  it("leaves gtm uninstalled (no enabled block) when it was not vendored", () => {
+    fs.rmSync(path.join(vendor, "plugins", "gtm"), {
+      recursive: true,
+      force: true,
+    })
+    run("ensure-install", configPath, vendor, "bitfab-internal")
+    const cfg = readConfig()
+    expect(cfg).toContain('[plugins."bitfab@bitfab-internal"]\nenabled = false')
+    expect(cfg).not.toContain("gtm@bitfab-internal")
+  })
+
+  it("drops a registered gtm block once it is no longer vendored", () => {
+    run("ensure-install", configPath, vendor, "bitfab-internal")
+    expect(readConfig()).toContain(
+      '[plugins."gtm@bitfab-internal"]\nenabled = true',
+    )
+    fs.rmSync(path.join(vendor, "plugins", "gtm"), {
+      recursive: true,
+      force: true,
+    })
+    run("ensure-install", configPath, vendor, "bitfab-internal")
+    expect(readConfig()).not.toContain("gtm@bitfab-internal")
+  })
 })
 
 describe("codex-config toggle (stable shim)", () => {
@@ -419,6 +474,7 @@ describe("codex-config toggle (stable shim)", () => {
     expect(cfg).toContain(
       '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
     )
+    expect(cfg).toContain('[plugins."gtm@bitfab-internal"]\nenabled = true')
   })
 
   it("prod disables the dev core and enables production, leaving helpers on", () => {
@@ -432,6 +488,7 @@ describe("codex-config toggle (stable shim)", () => {
     expect(cfg).toContain(
       '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
     )
+    expect(cfg).toContain('[plugins."gtm@bitfab-internal"]\nenabled = true')
   })
 })
 
@@ -511,5 +568,6 @@ describe("codex-config restore-prod (main repo)", () => {
     expect(cfg).toContain(
       '[plugins."bitfab-accounts@bitfab-internal"]\nenabled = true',
     )
+    expect(cfg).toContain('[plugins."gtm@bitfab-internal"]\nenabled = true')
   })
 })

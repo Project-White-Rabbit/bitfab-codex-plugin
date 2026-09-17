@@ -81,6 +81,25 @@ function prepareCompleteInstall(codexHome) {
       "local",
       "mcp.json",
     ),
+    path.join(
+      codexHome,
+      "plugins",
+      "cache",
+      "bitfab-internal",
+      "gtm",
+      "local",
+      ".codex-plugin",
+      "plugin.json",
+    ),
+    path.join(
+      codexHome,
+      "plugins",
+      "cache",
+      "bitfab-internal",
+      "gtm",
+      "local",
+      "mcp.json",
+    ),
   ]) {
     fs.mkdirSync(path.dirname(output), { recursive: true })
     fs.writeFileSync(output, "{}\n")
@@ -128,6 +147,25 @@ describe("dev install freshness", () => {
 
     expect(sharedChange).not.toBe(initial)
     expect(computeSourceHash(repoRoot)).not.toBe(sharedChange)
+  })
+
+  it("changes when an optional internal plugin's skills change", () => {
+    for (const plugin of [
+      "bitfab-accounts-codex-plugin",
+      "bitfab-gtm-codex-plugin",
+    ]) {
+      const skillPath = path.join(
+        repoRoot,
+        plugin,
+        "skills",
+        "demo",
+        "SKILL.md",
+      )
+      fs.mkdirSync(path.dirname(skillPath), { recursive: true })
+      const before = computeSourceHash(repoRoot)
+      fs.writeFileSync(skillPath, `# ${plugin}\n`)
+      expect(computeSourceHash(repoRoot)).not.toBe(before)
+    }
   })
 
   it("ignores build outputs, dependencies, and tests", () => {

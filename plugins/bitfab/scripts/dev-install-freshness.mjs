@@ -28,6 +28,9 @@ const INPUTS = [
   "bitfab-accounts-codex-plugin/.codex-plugin",
   "bitfab-accounts-codex-plugin/mcp.json",
   "bitfab-accounts-codex-plugin/skills",
+  "bitfab-gtm-codex-plugin/.codex-plugin",
+  "bitfab-gtm-codex-plugin/mcp.json",
+  "bitfab-gtm-codex-plugin/skills",
 ]
 
 const IGNORED_DIRECTORIES = new Set([".git", "dist", "node_modules", "tmp"])

@@ -33,6 +33,7 @@ STABLE_VENDOR_DIR="$CODEX_HOME/bitfab/internal-marketplace"
 CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab/local"
 DEV_CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab-dev/local"
 ACCOUNTS_CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab-accounts/local"
+GTM_CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/gtm/local"
 CONFIG_TOML="$CODEX_HOME/config.toml"
 SOURCE_HASH_STAMP="$STABLE_VENDOR_DIR/.source-hash"
 FRESHNESS_SCRIPT="$SCRIPT_DIR/dev-install-freshness.mjs"
@@ -67,7 +68,10 @@ outputs_ready() {
       || [ -f "$DEV_CACHE_DIR/.codex-plugin/plugin.json" ]; } \
     && { [ ! -d "$REPO_ROOT/bitfab-accounts-codex-plugin/skills" ] \
       || { [ -f "$ACCOUNTS_CACHE_DIR/.codex-plugin/plugin.json" ] \
-        && [ -f "$ACCOUNTS_CACHE_DIR/mcp.json" ]; }; }
+        && [ -f "$ACCOUNTS_CACHE_DIR/mcp.json" ]; }; } \
+    && { [ ! -d "$REPO_ROOT/bitfab-gtm-codex-plugin/skills" ] \
+      || { [ -f "$GTM_CACHE_DIR/.codex-plugin/plugin.json" ] \
+        && [ -f "$GTM_CACHE_DIR/mcp.json" ]; }; }
 }
 
 OUTPUTS_READY=0
@@ -197,6 +201,35 @@ else
   echo "==> Skipping bitfab-accounts (bitfab-accounts-codex-plugin not built; run bitfab-accounts-lib build first)" >&2
 fi
 
+echo "==> Vendoring gtm into $VENDOR_DIR/plugins/gtm"
+GTM_PLUGIN_SRC="$REPO_ROOT/bitfab-gtm-codex-plugin"
+if [ -d "$GTM_PLUGIN_SRC/skills" ] && [ -f "$GTM_PLUGIN_SRC/.codex-plugin/plugin.json" ]; then
+  rm -rf "$VENDOR_DIR/plugins/gtm"
+  mkdir -p "$VENDOR_DIR/plugins/gtm"
+  rsync -a --exclude node_modules "$GTM_PLUGIN_SRC/" "$VENDOR_DIR/plugins/gtm/"
+
+  echo "==> Adding gtm to $VENDOR_DIR/.agents/plugins/marketplace.json"
+  node -e "
+    const fs = require('fs');
+    const p = '$VENDOR_DIR/.agents/plugins/marketplace.json';
+    const mkt = JSON.parse(fs.readFileSync(p, 'utf8'));
+    mkt.plugins = (mkt.plugins || []).filter((x) => x.name !== 'gtm');
+    mkt.plugins.push({
+      name: 'gtm',
+      source: { source: 'local', path: './plugins/gtm' },
+      policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' },
+      category: 'sales',
+    });
+    fs.writeFileSync(p, JSON.stringify(mkt, null, 2) + '\n');
+  "
+
+  echo "==> Installing gtm into $GTM_CACHE_DIR"
+  mkdir -p "$GTM_CACHE_DIR"
+  rsync -a --delete "$VENDOR_DIR/plugins/gtm/" "$GTM_CACHE_DIR/"
+else
+  echo "==> Skipping gtm (bitfab-gtm-codex-plugin not built; run bitfab-gtm-lib build first)" >&2
+fi
+
 echo "==> Publishing stable marketplace source to $STABLE_VENDOR_DIR"
 mkdir -p "$STABLE_VENDOR_DIR"
 rsync -a --delete "$VENDOR_DIR/" "$STABLE_VENDOR_DIR/"
@@ -213,5 +246,5 @@ mv "$SOURCE_HASH_TMP" "$SOURCE_HASH_STAMP"
 
 echo
 echo "✅ Bitfab Codex dev build installed."
-echo "   bitfab-dev and bitfab-accounts stay enabled in every checkout."
+echo "   bitfab-dev, bitfab-accounts, and gtm stay enabled in every checkout."
 echo "   To activate the dev core: $PLUGIN_DIR/scripts/toggle.sh dev, then restart Codex."

@@ -7,9 +7,9 @@
  * rather than a full TOML parser.
  *
  * Worktree isolation: Codex stores plugin enablement globally. The uniquely
- * named `bitfab-dev` and `bitfab-accounts` helpers therefore stay enabled in
- * every checkout, while only the conflicting core `bitfab` plugin switches
- * between the production marketplace and the session-routed dev shim.
+ * named `bitfab-dev`, `bitfab-accounts`, and `gtm` helpers therefore stay
+ * enabled in every checkout, while only the conflicting core `bitfab` plugin
+ * switches between the production marketplace and the session-routed dev shim.
  *
  * Usage:
  *   codex-config.mjs ensure-install     <configPath> <vendorPath> <marketplaceName>
@@ -22,7 +22,7 @@ import fs from "node:fs"
 import path from "node:path"
 
 const [, , cmd, configPath, arg, arg2] = process.argv
-const OPTIONAL_INTERNAL_PLUGINS = ["bitfab-dev", "bitfab-accounts"]
+const OPTIONAL_INTERNAL_PLUGINS = ["bitfab-dev", "bitfab-accounts", "gtm"]
 
 function usage() {
   console.error(
@@ -257,7 +257,7 @@ function listInternalHookStateMarketplaces(content) {
   const names = new Set()
   for (const line of content.split("\n")) {
     const m = line.match(
-      /^\[hooks\.state\."(?:bitfab|bitfab-dev|bitfab-accounts)@(bitfab-internal(?:-[^:"]+)?):/,
+      /^\[hooks\.state\."(?:bitfab|bitfab-dev|bitfab-accounts|gtm)@(bitfab-internal(?:-[^:"]+)?):/,
     )
     if (m) {
       names.add(m[1])
@@ -270,7 +270,7 @@ function listInternalPluginMarketplaces(content) {
   const names = new Set()
   for (const line of content.split("\n")) {
     const m = line.match(
-      /^\[plugins\."(?:bitfab|bitfab-dev|bitfab-accounts)@(bitfab-internal(?:-[^"]+)?)"(?:\.|\])/,
+      /^\[plugins\."(?:bitfab|bitfab-dev|bitfab-accounts|gtm)@(bitfab-internal(?:-[^"]+)?)"(?:\.|\])/,
     )
     if (m) {
       names.add(m[1])
@@ -283,11 +283,11 @@ function listInternalPluginMarketplaces(content) {
 function dropMarketplace(content, mktName) {
   let next = removeSection(content, `[marketplaces.${mktName}]`)
   const pluginRe = new RegExp(
-    `^\\[plugins\\."(?:bitfab|bitfab-dev|bitfab-accounts)@${escapeRegex(mktName)}"(?:\\.|\\])`,
+    `^\\[plugins\\."(?:bitfab|bitfab-dev|bitfab-accounts|gtm)@${escapeRegex(mktName)}"(?:\\.|\\])`,
   )
   next = removeSectionsMatching(next, (header) => pluginRe.test(header))
   const hookStateRe = new RegExp(
-    `^\\[hooks\\.state\\."(?:bitfab|bitfab-dev|bitfab-accounts)@${escapeRegex(mktName)}:`,
+    `^\\[hooks\\.state\\."(?:bitfab|bitfab-dev|bitfab-accounts|gtm)@${escapeRegex(mktName)}:`,
   )
   next = removeSectionsMatching(next, (header) => hookStateRe.test(header))
   return next
