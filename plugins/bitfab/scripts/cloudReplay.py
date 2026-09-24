@@ -18,6 +18,7 @@ from urllib.parse import urlencode
 CONFIG = ".bitfab/cloud.json"
 HELPER = ".bitfab/cloudReplay.py"
 PREFIX = "bitfab-replay/"
+DEFAULT_SECRET_PREFIX = "BITFAB_CLOUD_"
 API_VERSION = "2026-03-10"
 UUID = re.compile(r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -100,6 +101,131 @@ def configuration(root):
     return config
 
 
+ENV_ASSIGNMENT = re.compile(r"[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*=")
+
+ENV_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", '"': '"', "\\": "\\"}
+
+
+def read_environment_value(text, assignment_end, name):
+    start = assignment_end
+    while start < len(text) and text[start] in " \t":
+        start += 1
+    if start < len(text) and text[start] in ("'", '"'):
+        quote = text[start]
+        pieces = []
+        position = start + 1
+        while position < len(text):
+            character = text[position]
+            if character == "\\" and quote == '"' and position + 1 < len(text):
+                following = text[position + 1]
+                pieces.append(ENV_ESCAPES.get(following, character + following))
+                position += 2
+                continue
+            if character == quote:
+                return "".join(pieces), position + 1
+            pieces.append(character)
+            position += 1
+        raise ValueError(f"{name} opens a quote that the file never closes")
+    end = text.find("\n", assignment_end)
+    end = len(text) if end == -1 else end
+    raw = text[assignment_end:end]
+    comment = re.search(r"\s#", raw)
+    return (raw if comment is None else raw[: comment.start()]).strip(), end
+
+
+def parse_environment_file(text):
+    values = {}
+    position = 0
+    while position < len(text):
+        end = text.find("\n", position)
+        end = len(text) if end == -1 else end
+        line = text[position:end]
+        match = ENV_ASSIGNMENT.match(line)
+        if match is None or line.lstrip().startswith("#"):
+            position = end + 1
+            continue
+        value, consumed = read_environment_value(
+            text, position + match.end(), match[1]
+        )
+        values[match[1]] = value
+        newline = text.find("\n", consumed)
+        position = len(text) if newline == -1 else newline + 1
+    return values
+
+
+def configure_secrets(argv):
+    parser = argparse.ArgumentParser(
+        prog="cloudReplay.py secrets",
+        description="Copy named values from local environment files into GitHub Actions secrets. Values are piped to gh on standard input and never printed, logged, or passed as arguments.",
+    )
+    parser.add_argument(
+        "names",
+        nargs="*",
+        help="Environment variable names to copy; defaults to the secrets recorded by setup",
+    )
+    parser.add_argument(
+        "--env-file",
+        action="append",
+        required=True,
+        help="Repository-relative environment file to read; repeatable, earliest definition wins",
+    )
+    parser.add_argument(
+        "--environment", help="Set GitHub Environment secrets instead of repository ones"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report which names were found without writing anything to GitHub",
+    )
+    args = parser.parse_args(argv)
+    root = root_directory()
+    config = configuration(root)
+    prefix = config.get("secretPrefix", "")
+    names = args.names or config.get("secrets") or ["BITFAB_API_KEY"]
+    if not all(re.fullmatch(r"[A-Z_][A-Z0-9_]*", name) for name in names):
+        raise ValueError("Secret names must be uppercase environment variable names")
+    values = {}
+    for path in args.env_file:
+        for key, value in parse_environment_file(within(root, path).read_text()).items():
+            values.setdefault(key, value)
+    repo = repository(root)
+    assigned = []
+    missing = []
+    empty = []
+    for name in names:
+        value = values.get(name)
+        if value is None:
+            missing.append(name)
+            continue
+        if not value:
+            empty.append(name)
+            continue
+        target = prefix + name
+        if not args.dry_run:
+            command(
+                [
+                    "gh",
+                    "secret",
+                    "set",
+                    target,
+                    "--repo",
+                    repo,
+                    *(["--env", args.environment] if args.environment else []),
+                ],
+                input=value,
+            )
+        assigned.append(target)
+    return {
+        "repository": repo,
+        "environment": args.environment,
+        "dryRun": args.dry_run,
+        "set": assigned,
+        "missing": missing,
+        "empty": empty,
+        "next": "Create the missing secrets by hand; empty local values were skipped because an empty secret overrides a working default with nothing; a wrong value only surfaces when the first real replay runs",
+    }
+
+
 def validate_config(config):
     if config.get("version") != 1 or config.get("provider") != "github":
         raise ValueError("Run bitfab:setup cloud to configure the GitHub provider")
@@ -125,6 +251,19 @@ def validate_config(config):
         raise ValueError(
             "Setup must review push-triggered CI/deployments and set pushTriggersReviewed=true"
         )
+    prefix = config.get("secretPrefix", "")
+    if not isinstance(prefix, str) or (
+        prefix and not re.fullmatch(r"[A-Z][A-Z0-9_]*_", prefix)
+    ):
+        raise ValueError(
+            "secretPrefix must be uppercase and end with an underscore, such as BITFAB_CLOUD_"
+        )
+    names = config.get("secrets", [])
+    if not isinstance(names, list) or not all(
+        isinstance(name, str) and re.fullmatch(r"[A-Z_][A-Z0-9_]*", name)
+        for name in names
+    ):
+        raise ValueError("secrets must be uppercase environment variable names")
 
 
 def gh(repo, *args, payload=None):
@@ -712,9 +851,14 @@ def initialize(argv):
             "pushTriggersReviewed",
         )
     }
-    validate_config(config)
     secrets = spec.get("secrets", ["BITFAB_API_KEY"])
     variables = spec.get("variables", [])
+    secret_prefix = spec.get("secretPrefix")
+    if secret_prefix is None:
+        secret_prefix = DEFAULT_SECRET_PREFIX
+    config["secrets"] = secrets
+    config["secretPrefix"] = secret_prefix
+    validate_config(config)
     if set(secrets) & set(variables):
         raise ValueError("Secret names and variable names must not overlap")
     if "BITFAB_API_KEY" not in secrets or not all(
@@ -730,7 +874,7 @@ def initialize(argv):
         or not all(isinstance(step, dict) for step in steps)
     ):
         raise ValueError("setupSteps must contain reviewed GitHub Actions setup steps")
-    env = {key: "${{ secrets." + key + " }}" for key in secrets}
+    env = {key: "${{ secrets." + secret_prefix + key + " }}" for key in secrets}
     env.update({key: "${{ vars." + key + " }}" for key in variables})
     env.update(
         BITFAB_CLOUD_REQUEST="${{ inputs.request }}",
@@ -802,7 +946,7 @@ def initialize(argv):
             file.write(content)
     return {
         "files": list(outputs),
-        "requiredSecrets": secrets,
+        "requiredSecrets": [secret_prefix + name for name in secrets],
         "requiredVariables": variables,
         "next": "Configure secrets securely, review push triggers, merge the workflow to the default branch, then run --cloud-dry-run",
     }
@@ -812,6 +956,8 @@ def main():
     try:
         if sys.argv[1:2] == ["init"]:
             result = initialize(sys.argv[2:])
+        elif sys.argv[1:2] == ["secrets"]:
+            result = configure_secrets(sys.argv[2:])
         elif sys.argv[1:] == ["execute"]:
             result = execute()
         else:
