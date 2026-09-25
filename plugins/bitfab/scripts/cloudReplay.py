@@ -22,12 +22,14 @@ DEFAULT_SECRET_PREFIX = "BITFAB_CLOUD_"
 API_VERSION = "2026-03-10"
 UUID = re.compile(r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
+PIPELINE = re.compile(r"^[\w.][\w.-]*$")
 HELP = """GitHub cloud replay (requires git, gh login, and Python 3.10+).
   --cloud PIPELINE --trace-ids UUID[,UUID] [--registry PATH]
     [--max-concurrency 1..32] [--cloud-request-id UUID]
     [--cloud-include PATH ...] [--cloud-dry-run] [--cloud-detach]
   --cloud-status UUID | --cloud-watch UUID | --cloud-cancel UUID
   --cloud-cleanup UUID
+PIPELINE may be any pipeline in the registry, unless .bitfab/cloud.json names one.
 Snapshot tracked working files without changing HEAD, the index, or local files.
 New files require explicit --cloud-include. Credentials and ignored files are refused.
 By default wait for completion and remove the remote snapshot branch. Detached runs
@@ -234,7 +236,10 @@ def validate_config(config):
     relative_path(config["workingDirectory"])
     if config.get("registry") is not None:
         relative_path(config["registry"])
-    if not re.fullmatch(r"[\w.-]+", config.get("pipeline", "")):
+    pipeline = config.get("pipeline")
+    if pipeline is not None and not (
+        isinstance(pipeline, str) and PIPELINE.fullmatch(pipeline)
+    ):
         raise ValueError("Invalid pipeline name")
     args = config.get("command")
     if (
@@ -264,6 +269,14 @@ def validate_config(config):
         for name in names
     ):
         raise ValueError("secrets must be uppercase environment variable names")
+
+
+def check_pipeline(config, pipeline):
+    if not isinstance(pipeline, str) or not PIPELINE.fullmatch(pipeline):
+        raise ValueError("Invalid pipeline name")
+    allowed = config.get("pipeline")
+    if allowed is not None and pipeline != allowed:
+        raise ValueError("Pipeline does not match .bitfab/cloud.json")
 
 
 def gh(repo, *args, payload=None):
@@ -399,25 +412,20 @@ def snapshot(root, config, args, execution_id):
                 raise ValueError(
                     f"Refusing credential-like tracked file in snapshot: {path}"
                 )
-        for path in (CONFIG, HELPER, f".github/workflows/{config['workflow']}"):
-            git(
-                root,
-                "--literal-pathspecs",
-                "ls-files",
-                "--error-unmatch",
-                "--",
-                path,
-                env=env,
-            )
+        required = [CONFIG, HELPER, f".github/workflows/{config['workflow']}"]
         if config.get("registry") is not None:
+            required.append(config["registry"])
+        tracked = set(
             git(
-                root,
-                "--literal-pathspecs",
-                "ls-files",
-                "--error-unmatch",
-                "--",
-                config["registry"],
-                env=env,
+                root, "--literal-pathspecs", "ls-files", "-z", "--", *required, env=env
+            ).split("\x00")
+        )
+        untracked = [path for path in required if path not in tracked]
+        if untracked:
+            raise ValueError(
+                "Not in the snapshot: "
+                + ", ".join(untracked)
+                + ". Commit these files, or pass --cloud-include for each one"
             )
         tree = git(root, "write-tree", env=env)
         files = git(root, "diff", "--name-only", head, tree).splitlines()
@@ -604,8 +612,7 @@ def run_cli(argv):
         if operation == "submit":
             config = configuration(root)
             within(root, config["workingDirectory"])
-            if args.pipeline != config["pipeline"]:
-                raise ValueError("Pipeline does not match .bitfab/cloud.json")
+            check_pipeline(config, args.pipeline)
             if args.registry is not None:
                 registry = Path(args.registry).resolve().relative_to(root).as_posix()
                 if registry != config.get("registry"):
@@ -733,13 +740,9 @@ def execute():
     if git(root, "rev-parse", "HEAD") != os.environ["GITHUB_SHA"]:
         raise ValueError("Runner checkout does not match the dispatched snapshot SHA")
     config = configuration(root)
-    if (
-        request["pipeline"] != config["pipeline"]
-        or request["id"] != os.environ["BITFAB_EXECUTION_ID"]
-    ):
-        raise ValueError(
-            "Replay request does not match the configured pipeline/execution"
-        )
+    check_pipeline(config, request["pipeline"])
+    if request["id"] != os.environ["BITFAB_EXECUTION_ID"]:
+        raise ValueError("Replay request does not match the configured execution")
     parse(
         [
             "--cloud",
@@ -834,7 +837,7 @@ def initialize(argv):
     parser.add_argument(
         "--config",
         required=True,
-        help="JSON file with cloud config, setupSteps, optional secrets, variables, environment, services, runsOn",
+        help="JSON file with cloud config, setupSteps, optional pipeline (omit or null to allow every registry pipeline), secrets, variables, environment, services, runsOn",
     )
     args = parser.parse_args(argv)
     spec = json.loads(Path(args.config).read_text())
@@ -846,11 +849,11 @@ def initialize(argv):
             "workflow",
             "workingDirectory",
             "registry",
-            "pipeline",
             "command",
             "pushTriggersReviewed",
         )
     }
+    config["pipeline"] = spec.get("pipeline")
     secrets = spec.get("secrets", ["BITFAB_API_KEY"])
     variables = spec.get("variables", [])
     secret_prefix = spec.get("secretPrefix")
