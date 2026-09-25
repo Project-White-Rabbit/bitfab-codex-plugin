@@ -62,7 +62,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 | `startDataset.js <key> <datasetId>` | Print a dataset link. |
 | `status.js` | Check plugin authentication and connection status |
 | `login.js` | Open a sign-in window and wait for authentication. Relay the printed sign-in link as a fallback. |
-| `switchOrg.js [<clerkOrganizationId>]` | List the user's Bitfab orgs (no args), or switch the plugin's active org and replace the local API key (with a <clerkOrganizationId> arg) |
+| `switchOrg.js [<authOrganizationId>]` | List the user's Bitfab orgs (no args), or switch the plugin's active org and replace the local API key (with a <authOrganizationId> arg) |
 | `startTemplatePreview.js <functionKey>` | Print a template preview link and exit. |
 | `update.js <mode>` | Check plugin + SDK versions and install the latest (used by inspect to detect and fix staleness) |
 | `sessionLogConsent.js [get|set true|set false]` | Read (`get` prints `true`/`false`/`null`) or persist (`set true|false`) the global session-log consent flag |
@@ -491,7 +491,7 @@ This is about trace *delivery and setup health* (is the SDK wired up and current
    - **Root not replayable**, two failure modes, with the fix matched to each: **(a) the root takes unserializable inputs** (live SDK/DB clients, HTTP req/res, streams, opaque contexts), with or without a replay registry module: move the trace boundary inward to a serializable-input function or refactor to introduce one; **(b) a bare trace-processor-only key** (OpenAI Agents SDK) whose root is the processor's empty-input span: add a `withTrace`/`trace` root that wraps the run and takes its input in a supported subtree runtime, or route the run through the run wrapper (`getOpenAiAgentHandler` / `get_openai_agent_handler`). Use a manual `withSpan`/`@span` root only when opt-out is technically unavailable. Either way, re-instrument via `$bitfab:setup modify` (or `$bitfab:setup instrument` for a fresh boundary). This is a code change, recommended here, not applied blanket.
    - **Opt-out roots without subtree capture**: every trace is the root alone, so tracing looks healthy and the traces are useless for per-step diagnosis, replay mocking, and prompt iteration. For TypeScript, use the installed SDK and wire the matching adapter into the build behind the server entrypoint, preserving existing config wrappers such as Sentry. For Python, this is a runtime upgrade to 3.12+; report it rather than attempting it.
    - **Instrumented but no traces**: the app hasn't run with tracing enabled, or `BITFAB_API_KEY` isn't set in the run environment. Run the app with the key loaded.
-   - **Key set but traces aren't visible in the browser**: the API key is bound to a different Clerk org/tenant than the browser session. A key resolves `API key → organization_id → clerk_organization_id → Clerk tenant` at creation time; browser visibility requires both to be the same tenant.
+   - **Key set but traces aren't visible in the browser**: the API key belongs to a different organization than the one the browser is showing. A key is bound to one organization when it is created, and the browser shows the signed-in user's active organization. Have the user pick the key's organization in the in-app org switcher; if it isn't listed, the signed-in user isn't a member of it.
    - **Nothing instrumented**: run `$bitfab:setup instrument`.
    - **Want to change what's captured**: run `$bitfab:setup modify`.
 
@@ -516,7 +516,7 @@ This is about trace *delivery and setup health* (is the SDK wired up and current
 
 Switch which Bitfab organization the plugin reads and writes. Triggered explicitly by `$bitfab:setup switch-org` (or natural-language asks like "switch org" / "change org" / "switch to the <name> org" / "I'm in the wrong org"). The plugin's org is set by the API key in `~/.config/bitfab/credentials.json`; this lists the user's orgs, switches to the chosen one, and replaces that local key. Requires authentication. Does **not** open Bitfab.
 
-**The live browser does not follow on its own.** Switching persists the new active org server-side (so future sign-ins default to it) and replaces the plugin's key, but a browser tab that's already signed in keeps showing the old org until its session is re-minted. The org actually flips in the browser on the **next** Bitfab open (a fresh session whose org check runs Clerk's client-side `setActive`) or when the user picks the org from the in-app org switcher.
+**The live browser does not follow on its own.** Switching persists the new active org server-side (so future sign-ins default to it) and replaces the plugin's key, but a browser tab that's already signed in keeps showing the old org until its session is re-minted. The org actually flips in the browser on the **next** Bitfab open (a fresh session whose org check sets the active organization in the browser) or when the user picks the org from the in-app org switcher.
 
 **The plugin key and the app's runtime key are separate.** Switching replaces only the plugin's credential in `~/.config/bitfab/credentials.json`. The `BITFAB_API_KEY` your application reads at runtime (from a `.env`-style file) is untouched, so traces your code sends keep landing in the **old** org until that key is updated too. The last step offers to do that.
 
@@ -527,7 +527,7 @@ Switch which Bitfab organization the plugin reads and writes. Triggered explicit
    ```
 
    If **already authenticated**, continue to step 2. If **not authenticated**, tell the user to sign in first with `$bitfab:setup login`, then stop; do NOT run the login flow as part of switching.
-2. Call `mcp__Bitfab__list_organizations` to list the organizations the signed-in user belongs to. Each entry has a name, the user's role, an `id:` (the `clerkOrganizationId`), and the org the plugin uses now is marked `[current]`.
+2. Call `mcp__Bitfab__list_organizations` to list the organizations the signed-in user belongs to. Each entry has a name, the user's role, an `id:` (the `authOrganizationId`), and the org the plugin uses now is marked `[current]`.
 
    Choose the target org:
    - **If the user already named an org** (in their request), match it case-insensitively by name against the list and use that org's `id`. If the name matches none, or matches more than one, fall through to asking.
@@ -535,15 +535,15 @@ Switch which Bitfab organization the plugin reads and writes. Triggered explicit
    - **Otherwise** ask the user which org to switch to. List each org by name and role, and mark the current one. Use the chosen org's `id`.
 
    Only ever use an `id` value returned by `mcp__Bitfab__list_organizations`; never invent one. Carry the chosen id into the next step.
-3. Switch to the chosen org by passing its `clerkOrganizationId`:
+3. Switch to the chosen org by passing its `authOrganizationId`:
 
    ```bash
-   node "${BITFAB_PLUGIN_DIR}/dist/commands/switchOrg.js" <clerkOrganizationId>
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/switchOrg.js" <authOrganizationId>
    ```
 
    The command prints one JSON line; act on it:
-   - `{"event":"switched","status":"switched"|"already-aligned","clerkOrganizationId":"...","organizationName":"...","apiKey":"..."}`: success. The plugin now reads and writes that org and its API key has been replaced locally. Tell the user in one line: the plugin is now connected to **<organizationName>**. Then tell them to select **<organizationName>** with the in-app org switcher to align their browser with the plugin. Opening a plugin page link does not change the browser's active organization. Hold on to the `apiKey` value from this JSON; the next step uses it to sync the app's local key, and you must never echo that value to the user.
-   - `{"event":"not-member","clerkOrganizationId":"..."}`: the user isn't a member of that org. Report it; do not retry.
+   - `{"event":"switched","status":"switched"|"already-aligned","authOrganizationId":"...","organizationName":"...","apiKey":"..."}`: success. The plugin now reads and writes that org and its API key has been replaced locally. Tell the user in one line: the plugin is now connected to **<organizationName>**. Then tell them to select **<organizationName>** with the in-app org switcher to align their browser with the plugin. Opening a plugin page link does not change the browser's active organization. Hold on to the `apiKey` value from this JSON; the next step uses it to sync the app's local key, and you must never echo that value to the user.
+   - `{"event":"not-member","authOrganizationId":"..."}`: the user isn't a member of that org. Report it; do not retry.
    - `{"event":"error","reason":"..."}`: report the reason.
 
    Do not print or ask for the API key, and do not surface the `apiKey` value to the user; the command replaces the plugin's copy for you and hands you that value solely for the next step.

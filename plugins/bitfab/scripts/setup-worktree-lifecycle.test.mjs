@@ -222,7 +222,7 @@ describe("setup-worktree lifecycle", () => {
     )
   })
 
-  it("repairs dev API keys when the Clerk mirror email is missing", () => {
+  it("repairs dev API keys when the mirror email is missing", () => {
     createLinkedWorktree()
     configureSuccessfulNeon()
     configureSuccessfulPnpm()
