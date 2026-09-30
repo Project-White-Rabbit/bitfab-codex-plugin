@@ -82,7 +82,7 @@ Read `$ARGUMENTS` first. If its first token is exactly one of the mode names bel
 | `inspect` | `inspect` | Diagnose (and offer to fix) your tracing setup: auth, what's instrumented, plugin/SDK freshness, replay coverage, trace arrival. |
 | `switch-org` | `switch-org` | Switch which Bitfab org the plugin reads and writes (replaces the local API key). |
 | `replay` | `replay` | Create or update replay registry modules for instrumented workflows. |
-| `cloud` | `cloud` | Run your normal replay on your own GitHub Actions by adding --cloud: same options, same output, same exit code. One workflow file in the repository; no Bitfab repository connection or GitHub CLI required. |
+| `cloud` | `cloud` | Run your normal replay on your own GitHub Actions by adding --cloud: same options and exit code, with a short summary of the result. One workflow file in the repository; no Bitfab repository connection or GitHub CLI required. |
 | `db-snapshot` | `db-snapshot` | Set up per-trace database snapshots so replay runs against the DB state at trace time (TypeScript, Python, Ruby). |
 | `templates` | `templates` | Iterate on the span-rendering templates for one trace function. |
 | `analyze-repo` | `analyze-repo` | Read-only discovery: scan source, rank the top workflows to instrument, and report recommendations without creating artifacts or changing code. |
@@ -93,7 +93,7 @@ Read `$ARGUMENTS` first. If its first token is exactly one of the mode names bel
 
 Run replay in the customer's GitHub Actions. Use this standalone mode for 'setup cloud', 'set up cloud replay', or 'replay on GitHub'. Do not enter login or connect a repository to Bitfab. Normal replay still uses a Bitfab API key on the runner.
 
-1. Cloud replay is the user's normal replay plus --cloud: every replay option works the same, the runner replays a snapshot of their working tree (changed files, plus new files git does not ignore) from the same directory, and the command prints the replay's own output and exits with its exit code. The code ships inside the SDK, and the repository keeps one file: .github/workflows/bitfab-replay.yml, which holds only settings.
+1. Cloud replay is the user's normal replay plus --cloud: every replay option works the same, the runner replays a snapshot of their working tree (changed files, plus new files git does not ignore) from the same directory, and the command prints the replay's progress and a short summary of its result (experiment ID and URL, replayed, same, changed, and errored counts, and each errored trace with its error), then exits with its exit code. Every trace's input and output are in the experiment in Bitfab, readable through the Bitfab MCP tools; --cloud-full-output prints the whole result instead. The code ships inside the SDK, and the repository keeps one file: .github/workflows/bitfab-replay.yml, which holds only settings.
 
    Run the installed SDK's bitfab-replay --cloud --help; if it does not list --cloud-preview, upgrade the SDK through bitfab:update first. Check that the git origin is github.com and that Python 3.10+ exists (macOS or Linux). GitHub access needs no GitHub CLI: the SDK uses gh when it is logged in, otherwise GH_TOKEN or GITHUB_TOKEN, otherwise the github.com credential git stores. When the repository still has .bitfab/cloud.json from an older SDK, the SDK says to delete it and the old workflow and run --cloud-init again; show the user the old file's settings first.
 
@@ -113,7 +113,7 @@ Run replay in the customer's GitHub Actions. Use this standalone mode for 'setup
 
    Verify with the replay command the user already runs. First add --cloud --cloud-preview, which pushes nothing and lists the changed and new files the snapshot would carry; review them for anything that should not leave the machine, since filename screening is not a secret scanner, and have the user gitignore it. Once the workflow is merged and secrets are set, and remote runs are authorized, run the same command with --cloud --dry-run: a real run that replays nothing but receives the secrets, stops on any empty secret, runs the --check command, and resolves the traces. Then, only when a replay is authorized, run with --cloud alone.
 
-   From an agent session always add --cloud-detach, since a replay can run for hours, and follow it with --cloud-watch <UUID> (prints the replay's output and exits with its code), --cloud-status, --cloud-cancel, or --cloud-cleanup. --cloud-timeout <minutes> stops one replay early and keeps finished traces. Report separately whether the workflow is written, secrets are set, the workflow is merged, the preview was reviewed, the dry run passed, and a real replay completed.
+   From an agent session always add --cloud-detach, since a replay can run for hours, and follow it with --cloud-watch <UUID> (prints the replay's progress and result summary and exits with its code), --cloud-status, --cloud-cancel, or --cloud-cleanup. --cloud-timeout <minutes> stops one replay early and keeps finished traces. Report separately whether the workflow is written, secrets are set, the workflow is merged, the preview was reviewed, the dry run passed, and a real replay completed.
 
 ## Login
 
