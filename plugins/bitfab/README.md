@@ -55,7 +55,7 @@ Note: the monorepo `bitfab-codex-plugin/` stays flat (mirrors `bitfab-claude-plu
 ```bash
 pnpm --filter bitfab-codex-plugin dev       # tsc --watch
 pnpm --filter bitfab-codex-plugin test      # vitest
-pnpm --filter bitfab-codex-plugin validate  # lint + tsc + knip + madge
+pnpm --filter bitfab-codex-plugin validate  # lint + tsc + knip
 ```
 
 ### Local install

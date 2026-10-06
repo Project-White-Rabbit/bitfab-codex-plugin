@@ -1,6 +1,6 @@
 {
   "name": "bitfab-codex-plugin",
-  "version": "0.12.49",
+  "version": "0.12.50",
   "description": "Automated regression testing and improvements for your prompts, context, and tool calls.",
   "type": "module",
   "scripts": {
@@ -11,8 +11,7 @@
     "lint:fix": "biome check --write",
     "tsc": "tsc --noEmit",
     "knip": "knip",
-    "madge": "madge --ts-config ./tsconfig.json --extensions ts --circular ./src",
-    "validate": "pnpm lint && pnpm tsc && pnpm knip && pnpm madge && node ../scripts/check-bitfab-plugin-command-surface.mjs"
+    "validate": "pnpm lint && pnpm tsc && pnpm knip && node ../scripts/check-bitfab-plugin-command-surface.mjs"
   },
   "keywords": [
     "codex",

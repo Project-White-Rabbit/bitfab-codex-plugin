@@ -163,25 +163,28 @@ describe("with-local-test-lock", () => {
     [4, 2],
     [2, 1],
     [1, 1],
-  ])("uses half of %i CPUs up to the four-worker cap", async (cpus, workers) => {
-    const { stdout } = await execFileAsync(
-      "bash",
-      [
-        SCRIPT,
-        process.execPath,
-        "-e",
-        'process.stdout.write(process.env.VITEST_MAX_WORKERS ?? "missing")',
-      ],
-      {
-        env: localTestEnv({
-          BITFAB_LOCAL_TEST_CPU_COUNT: String(cpus),
-          BITFAB_LOCAL_TEST_LOCK_PATH: lockPath,
-        }),
-      },
-    )
+  ])(
+    "uses half of %i CPUs up to the four-worker cap",
+    async (cpus, workers) => {
+      const { stdout } = await execFileAsync(
+        "bash",
+        [
+          SCRIPT,
+          process.execPath,
+          "-e",
+          'process.stdout.write(process.env.VITEST_MAX_WORKERS ?? "missing")',
+        ],
+        {
+          env: localTestEnv({
+            BITFAB_LOCAL_TEST_CPU_COUNT: String(cpus),
+            BITFAB_LOCAL_TEST_LOCK_PATH: lockPath,
+          }),
+        },
+      )
 
-    expect(stdout).toBe(String(workers))
-  })
+      expect(stdout).toBe(String(workers))
+    },
+  )
 
   it("bypasses both the lock and worker cap in CI", async () => {
     const env = {
