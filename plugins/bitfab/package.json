@@ -1,6 +1,6 @@
 {
   "name": "bitfab-codex-plugin",
-  "version": "0.12.69",
+  "version": "0.12.70",
   "description": "Automated regression testing and improvements for your prompts, context, and tool calls.",
   "type": "module",
   "scripts": {
@@ -27,13 +27,13 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "zod": "^4.6.5",
-    "@modelcontextprotocol/sdk": "^1.30.1",
+    "zod": "^4.6.7",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "semver": "^7.8.5"
   },
   "devDependencies": {
-    "@types/node": "^26.1.2",
+    "@types/node": "^26.6.5",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^5.0.4"
   }
 }
