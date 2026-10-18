@@ -31,7 +31,7 @@ Read `$ARGUMENTS` first. If its first token is exactly one of the mode names bel
 
 ## Setup
 
-0. Codex does not inject a plugin-root env var. Resolve it first (same block used by `setup` and `assistant`):
+0. Codex does not inject a plugin-root env var. Resolve it first (same block used by `setup`):
 
    ```bash
    if [ -z "$BITFAB_PLUGIN_DIR" ]; then
