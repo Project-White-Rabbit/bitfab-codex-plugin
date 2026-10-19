@@ -1,6 +1,6 @@
 ---
 name: assistant
-description: "Retired. Only use when the user explicitly types the bitfab assistant command by name; it tells them the assistant has been retired. Never use it for requests about traces, datasets, labels, replays, experiments, or improving a traced function: handle those directly with the Bitfab MCP tools"
+description: "Retired. Only use when the user explicitly types the bitfab assistant command by name; it tells them the assistant has been retired. Never use it for requests about traces, datasets, labels, verdicts, replays, experiments, or improving a traced function: handle those directly with the Bitfab MCP tools"
 ---
 
 # Bitfab Assistant (retired)
