@@ -47,11 +47,7 @@ beforeEach(() => {
   fs.mkdirSync(path.join(repoRoot, "node_modules", ".pnpm"), {
     recursive: true,
   })
-  for (const packageDir of [
-    "bitfab-flow",
-    "bitfab-plugin-lib",
-    "bitfab-codex-plugin",
-  ]) {
+  for (const packageDir of ["bitfab-plugin-lib", "bitfab-codex-plugin"]) {
     fs.mkdirSync(path.join(repoRoot, packageDir), { recursive: true })
     fs.writeFileSync(path.join(repoRoot, packageDir, "package.json"), "{}\n")
   }

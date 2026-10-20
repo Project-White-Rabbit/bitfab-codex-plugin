@@ -99,9 +99,6 @@ if [ -x "$REPO_ROOT/scripts/ensure-workspace-deps.sh" ]; then
   "$REPO_ROOT/scripts/ensure-workspace-deps.sh" "$REPO_ROOT"
 fi
 
-echo "==> Building bitfab-flow"
-(cd bitfab-flow && pnpm build)
-
 echo "==> Building bitfab-plugin-lib"
 (cd bitfab-plugin-lib && pnpm build)
 

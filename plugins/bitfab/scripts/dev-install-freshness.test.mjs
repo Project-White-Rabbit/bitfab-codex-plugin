@@ -110,13 +110,15 @@ function prepareCompleteInstall(codexHome) {
 
 beforeEach(() => {
   repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dev-install-freshness-"))
-  fs.mkdirSync(path.join(repoRoot, "bitfab-flow", "src"), { recursive: true })
+  fs.mkdirSync(path.join(repoRoot, "bitfab-plugin-lib", "src"), {
+    recursive: true,
+  })
   fs.mkdirSync(path.join(repoRoot, "bitfab-codex-plugin", "src"), {
     recursive: true,
   })
   fs.writeFileSync(
-    path.join(repoRoot, "bitfab-flow", "src", "index.ts"),
-    "export const flow = 1\n",
+    path.join(repoRoot, "bitfab-plugin-lib", "src", "index.ts"),
+    "export const lib = 1\n",
   )
   fs.writeFileSync(
     path.join(repoRoot, "bitfab-codex-plugin", "src", "index.ts"),
@@ -136,8 +138,8 @@ describe("dev install freshness", () => {
   it("changes for shared library and plugin source edits", () => {
     const initial = computeSourceHash(repoRoot)
     fs.writeFileSync(
-      path.join(repoRoot, "bitfab-flow", "src", "index.ts"),
-      "export const flow = 2\n",
+      path.join(repoRoot, "bitfab-plugin-lib", "src", "index.ts"),
+      "export const lib = 2\n",
     )
     const sharedChange = computeSourceHash(repoRoot)
     fs.writeFileSync(
@@ -170,22 +172,22 @@ describe("dev install freshness", () => {
 
   it("ignores build outputs, dependencies, and tests", () => {
     const initial = computeSourceHash(repoRoot)
-    fs.mkdirSync(path.join(repoRoot, "bitfab-flow", "dist"), {
+    fs.mkdirSync(path.join(repoRoot, "bitfab-plugin-lib", "dist"), {
       recursive: true,
     })
-    fs.mkdirSync(path.join(repoRoot, "bitfab-flow", "node_modules"), {
+    fs.mkdirSync(path.join(repoRoot, "bitfab-plugin-lib", "node_modules"), {
       recursive: true,
     })
     fs.writeFileSync(
-      path.join(repoRoot, "bitfab-flow", "dist", "index.js"),
+      path.join(repoRoot, "bitfab-plugin-lib", "dist", "index.js"),
       "compiled\n",
     )
     fs.writeFileSync(
-      path.join(repoRoot, "bitfab-flow", "node_modules", "dependency.js"),
+      path.join(repoRoot, "bitfab-plugin-lib", "node_modules", "dependency.js"),
       "dependency\n",
     )
     fs.writeFileSync(
-      path.join(repoRoot, "bitfab-flow", "src", "index.test.ts"),
+      path.join(repoRoot, "bitfab-plugin-lib", "src", "index.test.ts"),
       "test\n",
     )
 
