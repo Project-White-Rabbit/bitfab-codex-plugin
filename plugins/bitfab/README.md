@@ -38,12 +38,12 @@ Inside Codex, run the `bitfab-setup` skill - handles the browser OAuth flow and 
 This monorepo houses the dev source. The public repo (`Project-White-Rabbit/bitfab-codex-plugin`) that Codex installs from is produced by `.github/workflows/sync-bitfab-codex-plugin.yml` on every push to `main`:
 
 1. Build `bitfab-plugin-lib` + this plugin.
-2. Run `scripts/vendor-bitfab-plugin.sh bitfab-codex-plugin .codex-plugin _target plugins/bitfab`, which:
-   - Copies plugin files to `_target/plugins/bitfab/`
-   - Inlines `bitfab-plugin-lib/dist` into `_target/plugins/bitfab/node_modules/bitfab-plugin-lib/` (no workspace symlinks - Codex's `copy_dir_recursive` would drop them)
+2. Run `scripts/vendor-bitfab-plugin.sh --hoisted bitfab-codex-plugin .codex-plugin _target plugins/bitfab`, which:
+   - Runs `pnpm deploy --prod` with the hoisted linker into `_target/plugins/bitfab/`, copying the files listed in this plugin's `package.json` `files` field and installing its production dependencies, including `bitfab-plugin-lib` and `bitfab-lib`, as real directories under `node_modules/` (no symlinks, which Codex's `copy_dir_recursive` would drop)
+   - Copies `.codex-plugin/` next to the deployed files
+   - Removes the absolute `file:` workspace specs from the deployed `package.json`
    - Emits `_target/.agents/plugins/marketplace.json` pointing at `./plugins/bitfab` (Codex rejects root-level marketplace sources)
-   - Hoists `bitfab-plugin-lib`'s runtime deps into the vendored plugin's `package.json`
-3. `pnpm install --prod --ignore-workspace` in the vendored plugin dir.
+3. Test the vendored build (status command and MCP server).
 4. Commit + push to public repo, tag `v<version>`.
 
 Note: the monorepo `bitfab-codex-plugin/` stays flat (mirrors `bitfab-claude-plugin/` and `bitfab-cursor-plugin/` for dev consistency). The `plugins/bitfab/` subdir layout only exists in the vendored output because Codex requires a marketplace-wraps-plugin structure.

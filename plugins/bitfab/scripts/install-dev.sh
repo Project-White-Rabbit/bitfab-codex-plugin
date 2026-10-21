@@ -1,22 +1,36 @@
 #!/usr/bin/env bash
-#
-# Build, vendor, and install the dev version of the Bitfab Codex plugin.
-#
-# Mirrors the vendor + install steps CI runs, then idempotently registers
-# the local marketplace in ~/.codex/config.toml. Safe to re-run.
-#
-# This does NOT toggle the enabled state between dev and prod - use
-# toggle.sh for that.
 
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+Usage: install-dev.sh [--if-stale]
+
+Builds, vendors, and installs the dev version of the Bitfab Codex plugin, using
+the same vendor script CI runs, then registers the local marketplace in
+~/.codex/config.toml. Safe to re-run. It does not switch between the dev and
+production plugin: use toggle.sh for that.
+
+Options:
+  --if-stale   Skip the rebuild when the build inputs are unchanged since the
+               last verified install.
+  -h, --help   Print this help and exit.
+EOF
+}
+
 IF_STALE=0
-if [ "${1:-}" = "--if-stale" ]; then
-  IF_STALE=1
-  shift
-fi
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  --if-stale)
+    IF_STALE=1
+    shift
+    ;;
+esac
 if [ "$#" -gt 0 ]; then
-  echo "Usage: install-dev.sh [--if-stale]" >&2
+  usage >&2
   exit 2
 fi
 
@@ -26,8 +40,6 @@ REPO_ROOT="$(cd "$PLUGIN_DIR/.." && pwd)"
 
 VENDOR_DIR="$PLUGIN_DIR/tmp"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-# Stable internal marketplace. Worktree-specific code stays in the worktree and
-# is selected through the session runtime map; Codex only discovers this shim.
 MKT_NAME="bitfab-internal"
 STABLE_VENDOR_DIR="$CODEX_HOME/bitfab/internal-marketplace"
 CACHE_DIR="$CODEX_HOME/plugins/cache/$MKT_NAME/bitfab/local"
@@ -79,8 +91,6 @@ if outputs_ready; then
   OUTPUTS_READY=1
 fi
 
-# This is intentionally outside the rebuild gate: if hooks.json is deleted or
-# edited, the lightweight reconciliation must still self-heal it.
 node "$SCRIPT_DIR/install-session-hook.mjs" "$CODEX_HOME/hooks.json"
 
 if [ "$IF_STALE" = "1" ] \
@@ -91,8 +101,6 @@ if [ "$IF_STALE" = "1" ] \
   exit 0
 fi
 
-# The stamp represents a fully verified install. Clear it before any rebuild so
-# an interrupted forced install cannot make a partial output look current.
 rm -f "$SOURCE_HASH_STAMP"
 
 if [ -x "$REPO_ROOT/scripts/ensure-workspace-deps.sh" ]; then
@@ -108,7 +116,7 @@ echo "==> Building bitfab-codex-plugin"
 echo "==> Vendoring into $VENDOR_DIR"
 rm -rf "$VENDOR_DIR"
 mkdir -p "$VENDOR_DIR"
-scripts/vendor-bitfab-plugin.sh \
+scripts/vendor-bitfab-plugin.sh --hoisted \
   bitfab-codex-plugin .codex-plugin "$VENDOR_DIR" plugins/bitfab "$MKT_NAME"
 
 echo "==> Replacing bitfab skills with session-routed shims"
@@ -117,20 +125,10 @@ node "$SCRIPT_DIR/build-skill-shims.mjs" \
   "$VENDOR_DIR/plugins/bitfab/skills" \
   bitfabRuntime
 
-# Hoisted node_modules - Codex's copy routine drops symlinks, which would
-# strip zod and @modelcontextprotocol/sdk from an isolated pnpm layout.
-(cd "$VENDOR_DIR/plugins/bitfab" \
-  && pnpm install --prod --ignore-workspace --config.node-linker=hoisted)
-
 echo "==> Installing into $CACHE_DIR"
 mkdir -p "$CACHE_DIR"
 rsync -a --delete "$VENDOR_DIR/plugins/bitfab/" "$CACHE_DIR/"
 
-# bitfab-dev: the internal dev-workflow plugin (sync/ready/merge/close/...).
-# Skills-only and script-driven (its skills shell out to repo-relative
-# bitfab-internal/bitfab-dev/scripts/*), so there is no node_modules to vendor
-# and no MCP server. It rides in the same stable shim marketplace as the bitfab
-# plugin; the installed skill files route to the current session's worktree.
 echo "==> Vendoring bitfab-dev into $VENDOR_DIR/plugins/bitfab-dev"
 DEV_PLUGIN_SRC="$REPO_ROOT/bitfab-dev-codex-plugin"
 if [ -d "$DEV_PLUGIN_SRC/skills" ] && [ -f "$DEV_PLUGIN_SRC/.codex-plugin/plugin.json" ]; then
@@ -165,10 +163,6 @@ else
   echo "==> Skipping bitfab-dev (bitfab-dev-codex-plugin not built; run bitfab-plugin-lib build first)" >&2
 fi
 
-# bitfab-accounts: the internal sales-account plugin. Skills-only
-# and driven entirely by the Notion MCP, with no worktree-relative scripts, so
-# unlike bitfab-dev it needs no session-routed shims: the vendored skill content
-# is identical across worktrees. Rides in the same stable shim marketplace.
 echo "==> Vendoring bitfab-accounts into $VENDOR_DIR/plugins/bitfab-accounts"
 ACCOUNTS_PLUGIN_SRC="$REPO_ROOT/bitfab-accounts-codex-plugin"
 if [ -d "$ACCOUNTS_PLUGIN_SRC/skills" ] && [ -f "$ACCOUNTS_PLUGIN_SRC/.codex-plugin/plugin.json" ]; then
