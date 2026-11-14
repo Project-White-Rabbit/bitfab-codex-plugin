@@ -59,6 +59,7 @@ If the block prints `ERROR: Bitfab plugin not installed`, the user hasn't instal
 |---------|-------------|
 | `pageLink.js <path>` | Print a clickable product page URL and exit. |
 | `openExperiments.js <experimentIds>` | Print a link to experiments. |
+| `waitForExperiment.js <experimentIds> or --metadata <key=value> [--count N]` | Wait in the foreground until experiments finish, printing their progress; exits after about nine minutes and says to run it again. |
 | `startDataset.js <key> <datasetId>` | Print a dataset link. |
 | `status.js` | Check plugin authentication and connection status |
 | `login.js` | Open a sign-in window and wait for authentication. Relay the printed sign-in link as a fallback. |
@@ -113,7 +114,11 @@ Run replay in the customer's GitHub Actions. Use this standalone mode for 'setup
 
    Verify with the replay command the user already runs. First add --cloud --cloud-preview, which pushes nothing and lists the changed and new files the snapshot would carry; review them for anything that should not leave the machine, since filename screening is not a secret scanner, and have the user gitignore it. Once the workflow is merged and secrets are set, and remote runs are authorized, run the same command with --cloud --dry-run: a real run that replays nothing but receives the secrets, stops on any empty secret, runs the --check command, and resolves the traces. Then, only when a replay is authorized, run with --cloud alone.
 
-   From an agent session always add --cloud-detach, since a replay can run for hours, and follow it with --cloud-watch <UUID> (prints the replay's progress and result summary and exits with its code), --cloud-status, --cloud-cancel, or --cloud-cleanup. --cloud-timeout <minutes> stops one replay early and keeps finished traces. --cloud-env NAME=VALUE (repeatable) sets a non-secret environment variable for one replay; secrets go in the workflow's env and --cloud-secrets. When the snapshot refuses a credential-like file the user confirms is safe to upload, such as a test certificate, --cloud-allow-file <path> (repeatable, private repositories only) lets it in. Report separately whether the workflow is written, secrets are set, the workflow is merged, the preview was reviewed, the dry run passed, and a real replay completed.
+   From an agent session always add --cloud-detach and --metadata bitfab-wait=<new UUID>, since a replay can run for hours and a single tool call stops after about ten minutes. Then wait in the foreground, never as a background command, so you show as working until it finishes:
+
+   node "${BITFAB_PLUGIN_DIR}/dist/commands/waitForExperiment.js" --metadata bitfab-wait=<UUID>
+
+   When several replays run at once, start every one with the same tag and add --count <number of replays>, so one command waits for them all. It prints progress and exits when every experiment finishes or after about nine minutes. Run it again each time it prints STILL RUNNING, and do not end your turn while the replay runs; once it prints FINISHED, read the results with `mcp__Bitfab__get_experiment` and `mcp__Bitfab__list_experiment_traces` in the same turn. --cloud-status <execution UUID> shows whether a GitHub run failed before its experiment appeared; --cloud-cancel and --cloud-cleanup stop and clean up a run. --cloud-timeout <minutes> stops one replay early and keeps finished traces. --cloud-env NAME=VALUE (repeatable) sets a non-secret environment variable for one replay; secrets go in the workflow's env and --cloud-secrets. When the snapshot refuses a credential-like file the user confirms is safe to upload, such as a test certificate, --cloud-allow-file <path> (repeatable, private repositories only) lets it in. Report separately whether the workflow is written, secrets are set, the workflow is merged, the preview was reviewed, the dry run passed, and a real replay completed.
 
 ## Login
 
